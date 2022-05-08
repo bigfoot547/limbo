@@ -1,0 +1,7 @@
+#ifndef LIMBO_CONFIG_H_INCLUDED
+#define LIMBO_CONFIG_H_INCLUDED
+
+#cmakedefine PROJECT_NAME "@PROJECT_NAME@"
+#cmakedefine VERSION_NAME "@VERSION_NAME@"
+
+#endif // include guard
