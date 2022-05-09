@@ -54,7 +54,7 @@ void event_loop_handle(int timeout) {
             else {
                 log_warn("Disconnect on socket %d", fd->fd);
                 event_loop_delfd(fd);
-                close(fd->fd); // should probably use shutdown() here, but this branch shoudln't be taken anyway
+                close(fd->fd); // should probably use shutdown() here, but this branch shouldn't be taken anyway
             }
             continue; // Ignore the rest of the flags if the peer hung up
         }
@@ -68,9 +68,6 @@ void event_loop_handle(int timeout) {
             fd->state |= FD_CAN_WRITE;
             if (fd->write_handler) (*fd->write_handler)(fd, fd->handler_data);
         }
-
-        if (fd->state & FD_INTEREST) // this fd could have been removed from interest list during handlers
-            event_loop_want(fd, fd->state); // rearm due to EPOLLONESHOT
 #endif
     }
 }
@@ -81,7 +78,7 @@ void event_loop_close() {
 
 #ifdef SOCKET_ENGINE_EPOLL
 unsigned gen_epoll_flags(unsigned flags) {
-    unsigned ep = EPOLLET | EPOLLONESHOT;
+    unsigned ep = EPOLLET;
     if (flags & FD_WANT_READ) ep |= EPOLLIN;
     if (flags & FD_WANT_WRITE) ep |= EPOLLOUT;
     return ep;

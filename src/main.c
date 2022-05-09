@@ -3,6 +3,8 @@
 #include "build_config.h"
 #include "event.h"
 #include "server.h"
+#include "list.h"
+#include "client.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -25,6 +27,7 @@ void con_read_handler(file_descriptor_t *fd, void *d) {
                 log_error("Error reading from stdin: %s", strerror(errno));
                 close(fd->fd);
             }
+            fd->state &= ~FD_CAN_READ;
             break;
         } else {
             write(1, buf, numread);
@@ -54,12 +57,17 @@ int main() {
 
     log_setlevel(LOG_DEBUG);
     log_info("Running " PROJECT_NAME " version " VERSION_NAME);
+
+    dllist_t *clients = dll_create_sync();
+
     event_loop_init();
     server_t *serv = NULL;
     if (!server_init("::", 25565, 0, &serv)) {
         log_error("Failed to bind serv.");
         return 1;
     }
+
+    serv->clients = clients;
 
     //if (!server_init("localhost", 25565, &serv1)) {
     //    log_error("failed aaa");
@@ -90,6 +98,11 @@ int main() {
 
     event_loop_delfd(serv->fd);
     server_free(serv);
+
+    DLLIST_FOREACH(clients, cur) {
+        client_free((client_t *)cur->ptr);
+    } DLLIST_FOREACH_DONE(clients);
+    dll_free(clients);
 
     event_loop_close();
 

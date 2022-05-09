@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include "event.h"
 #include "types.h"
+#include "list.h"
 
 #define SERVER_IPV6ONLY (1 << 0)
 
@@ -12,6 +13,8 @@ typedef struct tag_server {
     file_descriptor_t *fd;
     sockaddrs saddr;
     socklen_t saddrlen;
+
+    dllist_t *clients;
 } server_t;
 
 // handle unix domain socket or something also?

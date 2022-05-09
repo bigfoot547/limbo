@@ -13,8 +13,10 @@
 #include <sys/un.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
+#include <stdbool.h>
 
 #include "log.h"
+#include "client.h"
 
 void server_handle_read(file_descriptor_t *fd, void *handler_info);
 
@@ -22,6 +24,35 @@ int make_fd_nonblock(int fd) {
     int flags = fcntl(fd, F_GETFL);
     if (flags < 0) return flags;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+server_t *server_init_common(int sockfd, struct sockaddr *saddr, socklen_t saddrlen) {
+/*        server_t *server = malloc(sizeof(server_t));
+        memset(server, 0, sizeof(server_t));
+        *target = server;
+
+        file_descriptor_t *fd = malloc(sizeof(file_descriptor_t));
+        memset(fd, 0, sizeof(file_descriptor_t));
+        fd->fd = sockfd;
+        fd->handler_data = server;
+        fd->read_handler = &server_handle_read;
+        server->fd = fd;
+
+        server->saddrlen = cursor->ai_addrlen;
+        memcpy(&server->saddr, cursor->ai_addr, cursor->ai_addrlen);*/
+    server_t *server = malloc(sizeof(server_t));
+    memset(server, 0, sizeof(server_t));
+
+    file_descriptor_t *fd = malloc(sizeof(file_descriptor_t));
+    memset(fd, 0, sizeof(file_descriptor_t));
+    fd->fd = sockfd;
+    fd->handler_data = server;
+    fd->read_handler = &server_handle_read;
+    server->fd = fd;
+
+    server->saddrlen = saddrlen;
+    memcpy(&server->saddr.base, saddr, saddrlen);
+    return server;
 }
 
 bool server_init(const char *host, unsigned short port, unsigned flags, server_t **target) {
@@ -98,19 +129,7 @@ bool server_init(const char *host, unsigned short port, unsigned flags, server_t
         }
 
         // wrap our file descriptor in a new server object
-        server_t *server = malloc(sizeof(server_t));
-        memset(server, 0, sizeof(server_t));
-        *target = server;
-
-        file_descriptor_t *fd = malloc(sizeof(file_descriptor_t));
-        memset(fd, 0, sizeof(file_descriptor_t));
-        fd->fd = sockfd;
-        fd->handler_data = server;
-        fd->read_handler = &server_handle_read;
-        server->fd = fd;
-
-        server->saddrlen = cursor->ai_addrlen;
-        memcpy(&server->saddr, cursor->ai_addr, cursor->ai_addrlen);
+        *target = server_init_common(sockfd, cursor->ai_addr, cursor->ai_addrlen);
         goto done;
 
 failcontinue:
@@ -183,19 +202,7 @@ bool server_init_unix(const char *path, server_t **target) {
         return false;
     }
 
-    server_t *server = malloc(sizeof(server_t));
-    memset(server, 0, sizeof(server_t));
-    *target = server;
-
-    file_descriptor_t *fd = malloc(sizeof(file_descriptor_t));
-    memset(fd, 0, sizeof(file_descriptor_t));
-    fd->fd = sockfd;
-    fd->handler_data = server;
-    fd->read_handler = &server_handle_read;
-    server->fd = fd;
-
-    server->saddrlen = sizeof(addr);
-    memcpy(&server->saddr, &addr, sizeof(addr));
+    *target = server_init_common(sockfd, (struct sockaddr *)&addr, sizeof(addr));
 
     return true;
 }
@@ -216,44 +223,43 @@ void server_free(server_t *server) {
 }
 
 void server_handle_read(file_descriptor_t *fd, void *handler_info) {
-    server_t *server = handler_info;
+    server_t *server = (server_t *)handler_info;
 
-    // accept clients until no longer possible
-    // TODO: make a client struct that has a fd and send/recv queue
     struct sockaddr_storage saddr;
-    socklen_t saddrlen = sizeof(saddr);
-    int accfd = accept(fd->fd, (struct sockaddr *)&saddr, &saddrlen);
-    close(accfd);
-
-    if (saddr.ss_family == AF_INET6) {
-        struct sockaddr_in6 *in6_saddr = (struct sockaddr_in6 *)&saddr;
-        if (IN6_IS_ADDR_V4MAPPED(&(in6_saddr->sin6_addr))) {
-            struct sockaddr_in newaddr;
-            memset(&newaddr, 0, sizeof(newaddr));
-            newaddr.sin_family = AF_INET;
-            newaddr.sin_port = in6_saddr->sin6_port;
-            memcpy(&newaddr.sin_addr, in6_saddr->sin6_addr.s6_addr + 12, 4);
-            char addrbuf[256];
-            log_info("v4mapped: %s:%hu", inet_ntop(AF_INET, &newaddr.sin_addr, addrbuf, 256), ntohs(newaddr.sin_port));
-        }
-    }
-
-    switch (saddr.ss_family) {
-        case AF_UNIX:
-            log_info("Family: AF_UNIX - path: %s", ((struct sockaddr_un *)&saddr)->sun_path);
-            break;
-        case AF_INET:
-        case AF_INET6:
-            char addrbuf[256];
-            void *addr;
-            unsigned short port;
-            if (saddr.ss_family == AF_INET) {
-                addr = &(((struct sockaddr_in *)&saddr)->sin_addr);
-                port = ntohs(((struct sockaddr_in *)&saddr)->sin_port);
+    socklen_t saddrlen;
+    int accattempt;
+    while (true) {
+        saddrlen = sizeof(saddr);
+        accattempt = 0;
+        int accfd = accept(fd->fd, (struct sockaddr *)&saddr, &saddrlen);
+        if (accfd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) { // no more peers to accept
+                fd->state &= ~FD_CAN_READ;
+                break;
             } else {
-                addr = &(((struct sockaddr_in6 *)&saddr)->sin6_addr);
-                port = ntohs(((struct sockaddr_in6 *)&saddr)->sin6_port);
+                log_error("server_handle_read: accept: %s (attempt %d)", strerror(errno), ++accattempt);
+                if (accattempt >= 5) {
+                    log_error("server_handle_read: Surpassed attempt 5 attempting to accept a peer.");
+                    abort(); // FIXME: shut down cleanly?
+                }
+                continue;
             }
-            log_info("Family: %s - addr: %s - port: %hu", saddr.ss_family == AF_INET ? "AF_INET" : "AF_INET6", inet_ntop(saddr.ss_family, addr, addrbuf, 256), port);
+        }
+
+        if (make_fd_nonblock(accfd) < 0) {
+            log_error("server_handle_read: fcntl: %s", strerror(errno));
+            close(accfd);
+            continue;
+        }
+
+        if (!server->clients) {
+            log_error("I've got nowhere to put my users! Closing connection %d.", accfd);
+            close(accfd);
+            continue;
+        }
+
+        client_t *client = client_init(server, accfd, (struct sockaddr *)&saddr, saddrlen);
+        dll_addend(server->clients, client);
+        event_loop_want(client->fd, FD_WANT_READ | FD_WANT_WRITE);
     }
 }
