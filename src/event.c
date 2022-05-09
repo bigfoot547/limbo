@@ -68,6 +68,9 @@ void event_loop_handle(int timeout) {
             fd->state |= FD_CAN_WRITE;
             if (fd->write_handler) (*fd->write_handler)(fd, fd->handler_data);
         }
+
+        if (fd->state & FD_INTEREST) // this fd could have been removed from interest list during handlers
+            event_loop_want(fd, fd->state); // rearm due to EPOLLONESHOT
 #endif
     }
 }
@@ -78,7 +81,7 @@ void event_loop_close() {
 
 #ifdef SOCKET_ENGINE_EPOLL
 unsigned gen_epoll_flags(unsigned flags) {
-    unsigned ep = EPOLLET;
+    unsigned ep = EPOLLET | EPOLLONESHOT;
     if (flags & FD_WANT_READ) ep |= EPOLLIN;
     if (flags & FD_WANT_WRITE) ep |= EPOLLOUT;
     return ep;
