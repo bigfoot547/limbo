@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <sys/un.h>
 #include <sys/stat.h>
+#include <netinet/in.h>
 
 #include "log.h"
 
@@ -23,7 +24,7 @@ int make_fd_nonblock(int fd) {
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
-bool server_init(const char *host, unsigned short port, server_t **target) {
+bool server_init(const char *host, unsigned short port, unsigned flags, server_t **target) {
     struct addrinfo *res = NULL, hints;
     memset(&hints, 0, sizeof(hints));
     bool success = true;
@@ -60,6 +61,7 @@ bool server_init(const char *host, unsigned short port, server_t **target) {
             goto done;
         }
 
+        // make the socket nonblocking
         if (make_fd_nonblock(sockfd) < 0) {
             log_error("server_init(%s, %hu): fcntl: %s", host, port, strerror(errno));
             close(sockfd);
@@ -67,23 +69,37 @@ bool server_init(const char *host, unsigned short port, server_t **target) {
             goto done;
         }
 
+        // enable reuseaddr
+        int reuseaddr = 1;
+        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(int)) < 0) {
+            log_warn("server_init(%s, %hu): setsockopt(SOL_SOCKET, SO_REUSEADDR, %d): %s", host, port, reuseaddr, strerror(errno));
+        }
+
+        // enable/disable IPV6_V6ONLY depending on the flag (different systems have different defaults, see ipv6(7))
+        if (cursor->ai_family == AF_INET6) {
+            int val = !!(flags & SERVER_IPV6ONLY);
+            if (setsockopt(sockfd, IPPROTO_IPV6, IPV6_V6ONLY, &val, sizeof(int)) < 0) {
+                log_warn("server_init(%s, %hu): setsockopt(IPPROTO_IPV6, IPV6_V6ONLY, %d): %s", host, port, val, strerror(errno));
+            }
+        } else if (flags & SERVER_IPV6ONLY) {
+            log_warn("server_init(%s, %hu): server has flag SERVER_IPV6ONLY but host has family AF_INET, ignoring flag.", host, port);
+        }
+
+        // actually do the bind
         if (bind(sockfd, cursor->ai_addr, cursor->ai_addrlen) < 0) {
             log_error("server_init(%s, %hu): bind: %s", host, port, strerror(errno));
-//            close(sockfd);
-//            cursor = cursor->ai_next;
-//            continue;
             goto failcontinue;
         }
 
+        // and start listening for connections (none will be accepted until this is added to the event loop, though)
         if (listen(sockfd, 20) < 0) {
             log_error("server_init(%s, %hu): listen: %s", host, port, strerror(errno));
-//            close(sockfd);
-//            cursor = cursor->ai_next;
-//            continue;
             goto failcontinue;
         }
 
+        // wrap our file descriptor in a new server object
         server_t *server = malloc(sizeof(server_t));
+        memset(server, 0, sizeof(server_t));
         *target = server;
 
         file_descriptor_t *fd = malloc(sizeof(file_descriptor_t));
@@ -94,8 +110,7 @@ bool server_init(const char *host, unsigned short port, server_t **target) {
         server->fd = fd;
 
         server->saddrlen = cursor->ai_addrlen;
-        server->saddr = malloc(cursor->ai_addrlen);
-        memcpy(server->saddr, cursor->ai_addr, cursor->ai_addrlen);
+        memcpy(&server->saddr, cursor->ai_addr, cursor->ai_addrlen);
         goto done;
 
 failcontinue:
@@ -169,6 +184,7 @@ bool server_init_unix(const char *path, server_t **target) {
     }
 
     server_t *server = malloc(sizeof(server_t));
+    memset(server, 0, sizeof(server_t));
     *target = server;
 
     file_descriptor_t *fd = malloc(sizeof(file_descriptor_t));
@@ -179,8 +195,7 @@ bool server_init_unix(const char *path, server_t **target) {
     server->fd = fd;
 
     server->saddrlen = sizeof(addr);
-    server->saddr = malloc(sizeof(addr));
-    memcpy(server->saddr, &addr, sizeof(addr));
+    memcpy(&server->saddr, &addr, sizeof(addr));
 
     return true;
 }
@@ -189,15 +204,14 @@ void server_free(server_t *server) {
     if (!server) return;
     if (server->fd) close(server->fd->fd);
 
-    if (server->saddr && server->saddr->sa_family == AF_UNIX) {
-        char *path = ((struct sockaddr_un *)server->saddr)->sun_path;
+    if (server->saddr.base.sa_family == AF_UNIX) {
+        char *path = server->saddr.un.sun_path;
         if (unlink(path) < 0) {
             log_error("server_free: Unable to unlink '%s': %s", path, strerror(errno));
         }
     }
 
     free(server->fd);
-    free(server->saddr);
     free(server);
 }
 

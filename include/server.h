@@ -4,16 +4,19 @@
 #include <sys/socket.h>
 #include <stdbool.h>
 #include "event.h"
+#include "types.h"
+
+#define SERVER_IPV6ONLY (1 << 0)
 
 typedef struct tag_server {
     file_descriptor_t *fd;
-    struct sockaddr *saddr;
+    sockaddrs saddr;
     socklen_t saddrlen;
 } server_t;
 
 // handle unix domain socket or something also?
 // sockaddr_storage exists
-bool server_init(const char *host, unsigned short port, server_t **target);
+bool server_init(const char *host, unsigned short port, unsigned flags, server_t **target);
 bool server_init_unix(const char *path, server_t **target);
 
 void server_free(server_t *server);

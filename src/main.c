@@ -7,8 +7,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <unistd.h>
+#include <pthread.h>
 
-bool shutdown_server = false;
+volatile bool shutdown_server = false;
 
 void con_read_handler(file_descriptor_t *fd, void *d) {
     log_info("Console readable! :D");
@@ -43,6 +45,7 @@ void *io_worker(void *arg) {
         event_loop_handle(5000);
         log_debug("handle complete on thread %d", (int)(unsigned long long)arg);
     }
+    return NULL;
 }
 
 // TODO: Handle (ignore) SIGPIPE and handle SIGINT
@@ -52,8 +55,8 @@ int main() {
     log_setlevel(LOG_DEBUG);
     log_info("Running " PROJECT_NAME " version " VERSION_NAME);
     event_loop_init();
-    server_t *serv = NULL, *serv1 = NULL;
-    if (!server_init("::", 25565, &serv)) {
+    server_t *serv = NULL;
+    if (!server_init("::", 25565, 0, &serv)) {
         log_error("Failed to bind serv.");
         return 1;
     }
@@ -64,7 +67,6 @@ int main() {
     //}
 
     event_loop_want(serv->fd, FD_WANT_READ);
-//    event_loop_want(serv1->fd, FD_WANT_READ);
 
     file_descriptor_t fd;
     memset(&fd, 0, sizeof(fd));
@@ -86,8 +88,8 @@ int main() {
         pthread_join(pt[i], NULL);
     }
 
+    event_loop_delfd(serv->fd);
     server_free(serv);
-    server_free(serv1);
 
     event_loop_close();
 

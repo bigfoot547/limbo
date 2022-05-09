@@ -43,6 +43,7 @@ void event_loop_handle(int timeout) {
             if (fd->error_handler) (*fd->error_handler)(fd, error, fd->handler_data);
             else {
                 log_warn("Error on socket (%d): %s", fd->fd, error == -1 ? "Unknown" : (error == 0 ? "Disconnected" : strerror(error)));
+                event_loop_delfd(fd);
                 close(fd->fd);
             }
             continue; // Ignore the rest of the flags if the socket is errored
@@ -52,6 +53,7 @@ void event_loop_handle(int timeout) {
             if (fd->error_handler) (*fd->error_handler)(fd, 0, fd->handler_data);
             else {
                 log_warn("Disconnect on socket %d", fd->fd);
+                event_loop_delfd(fd);
                 close(fd->fd); // should probably use shutdown() here, but this branch shoudln't be taken anyway
             }
             continue; // Ignore the rest of the flags if the peer hung up
@@ -91,11 +93,11 @@ void event_loop_want(file_descriptor_t *fd, unsigned flags) {
 
 #ifdef SOCKET_ENGINE_EPOLL
     int op;
-    if (fd->state & FD_EPOLL_INTEREST) {
+    if (fd->state & FD_INTEREST) {
         op = EPOLL_CTL_MOD;
     } else {
         op = EPOLL_CTL_ADD;
-        fd->state |= FD_EPOLL_INTEREST;
+        fd->state |= FD_INTEREST;
     }
 
     struct epoll_event evt;
@@ -104,4 +106,16 @@ void event_loop_want(file_descriptor_t *fd, unsigned flags) {
     evt.data.ptr = (void *)fd;
     epoll_ctl(sefd, op, fd->fd, &evt);
 #endif
+}
+
+void event_loop_delfd(file_descriptor_t *fd) {
+    if (!(fd->state & FD_INTEREST)) return;
+
+#ifdef SOCKET_ENGINE_EPOLL
+    struct epoll_event evt; // older kernels want evt to be non-NULL
+    memset(&evt, 0, sizeof(evt));
+    epoll_ctl(sefd, EPOLL_CTL_DEL, fd->fd, &evt);
+#endif
+
+    fd->state &= ~FD_INTEREST;
 }

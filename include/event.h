@@ -5,7 +5,7 @@
 #define FD_WANT_WRITE (1 << 1)
 #define FD_CAN_READ   (1 << 2)
 #define FD_CAN_WRITE  (1 << 3)
-#define FD_EPOLL_INTEREST (1 << 4)
+#define FD_INTEREST   (1 << 4)
 
 #define FD_WANT_ALL (FD_WANT_READ | FD_WANT_WRITE)
 
@@ -30,5 +30,6 @@ typedef struct tag_file_descriptor {
 } file_descriptor_t;
 
 void event_loop_want(file_descriptor_t *fd, unsigned flags);
+void event_loop_delfd(file_descriptor_t *fd);
 
 #endif // include guard
