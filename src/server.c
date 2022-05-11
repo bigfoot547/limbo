@@ -166,8 +166,9 @@ bool ensure_sockfile_avail(const char *path) {
 }
 #endif
 
-bool server_init_unix(const char *path, server_t **target) {
+bool server_init_unix(const char *path, unsigned flags, server_t **target) {
     //if (!ensure_sockfile_avail(path)) return false;
+    (void)flags;
 
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
@@ -258,8 +259,9 @@ void server_handle_read(file_descriptor_t *fd, void *handler_info) {
             continue;
         }
 
-        client_t *client = client_init(server, accfd, (struct sockaddr *)&saddr, saddrlen);
-        dll_addend(server->clients, client);
+        client_t *client = client_init(accfd, (struct sockaddr *)&saddr, saddrlen);
+        client->clients = server->clients;
+        client->mypos = dll_addend(server->clients, client);
         event_loop_want(client->fd, FD_WANT_READ | FD_WANT_WRITE);
     }
 }

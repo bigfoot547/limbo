@@ -56,8 +56,15 @@ target_compile_options(${SERVER_TARGET_NAME} PRIVATE -Wall -Wextra -pedantic)
 
 target_link_libraries(${SERVER_TARGET_NAME} PRIVATE Threads::Threads)
 
+option(ENABLE_ASAN "Enables address sanitizer (gcc only probably)" OFF)
+if(ENABLE_ASAN)
+    target_compile_options(${SERVER_TARGET_NAME} PRIVATE -fsanitize=address)
+    target_link_options(${SERVER_TARGET_NAME} PRIVATE -fsanitize=address)
+    message(STATUS "*** Compiling with address sanitizer - performance will be impacted!")
+endif()
+
+
 if(CMAKE_BUILD_TYPE STREQUAL Debug)
-    target_link_libraries(${SERVER_TARGET_NAME} PRIVATE -fsanitize=address)
     target_compile_options(${SERVER_TARGET_NAME} PRIVATE -O0 -g)
 else()
     target_compile_options(${SERVER_TARGET_NAME} PRIVATE -O3)

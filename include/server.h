@@ -20,7 +20,7 @@ typedef struct tag_server {
 // handle unix domain socket or something also?
 // sockaddr_storage exists
 bool server_init(const char *host, unsigned short port, unsigned flags, server_t **target);
-bool server_init_unix(const char *path, server_t **target);
+bool server_init_unix(const char *path, unsigned flags, server_t **target);
 
 void server_free(server_t *server);
 

@@ -68,6 +68,8 @@ void event_loop_handle(int timeout) {
             fd->state |= FD_CAN_WRITE;
             if (fd->write_handler) (*fd->write_handler)(fd, fd->handler_data);
         }
+
+        if (fd->handle_complete) (*fd->handle_complete)(fd, fd->handler_data);
 #endif
     }
 }

@@ -4,7 +4,8 @@ set(${PROJECT_NAME}_SOURCES
     event.c
     server.c
     list.c
-    client.c)
+    client.c
+    utils.c)
 
 list(TRANSFORM ${PROJECT_NAME}_SOURCES PREPEND src/)
 
