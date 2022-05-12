@@ -100,7 +100,9 @@ int main() {
     server_free(serv);
 
     DLLIST_FOREACH(clients, cur) {
-        client_free((client_t *)cur->ptr);
+        client_t *cli = cur->ptr;
+        cli->mypos = NULL; // FIXME: hack to prevent client from removing itself from clients list
+        client_free(cli);
     } DLLIST_FOREACH_DONE(clients);
     dll_free(clients);
 

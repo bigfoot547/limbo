@@ -16,8 +16,8 @@ typedef struct tag_client {
     socklen_t saddrlen;
     char *saddrstr;
 
-    unsigned char *recvq;
-    size_t recvqsz;
+    unsigned char *recvpartial;
+    size_t recvpartsz, recvpartcur, recvpartexsz;
 
     bool should_delete;
 
