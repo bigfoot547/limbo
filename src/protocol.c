@@ -74,6 +74,11 @@ int64_t proto_read_varlong(unsigned char **buf, struct proto_read_limit *lim) {
 }
 
 void proto_handle_incoming(client_t *sender, unsigned char *buf, struct proto_read_limit *lim) {
+    if (lim->remain == 9) {
+        unsigned char wbuf[] = {14, 0, 12, '{', '"', 't', 'e', 'x', 't', '"', ':', '"', 'a', '"', '}'};
+        client_write(sender, wbuf, 15);
+    }
+
     log_info("Read packet of length %d", lim->remain);
     log_info("Packet ID: %d", proto_read_varint(&buf, lim));
     while (lim->remain > 0) {

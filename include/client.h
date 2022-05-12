@@ -19,6 +19,9 @@ typedef struct tag_client {
     unsigned char *recvpartial;
     size_t recvpartsz, recvpartcur, recvpartexsz;
 
+    unsigned char *sendq;
+    size_t sendqcur, sendqsz;
+
     bool should_delete;
 
     dllist_t *clients;
@@ -29,5 +32,6 @@ client_t *client_init(int fd, struct sockaddr *saddr, socklen_t saddrlen);
 void client_free(client_t *cli);
 
 void client_disconnect(client_t *cli, const char *fmt, ...);
+void client_write(client_t *client, const unsigned char *buf, size_t length);
 
 #endif // include guard

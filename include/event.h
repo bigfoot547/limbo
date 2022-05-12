@@ -6,6 +6,7 @@
 #define FD_CAN_READ   (1u << 2)
 #define FD_CAN_WRITE  (1u << 3)
 #define FD_INTEREST   (1u << 4)
+#define FD_CALL_COMPLETE (1u << 5)
 
 #define FD_WANT_ALL (FD_WANT_READ | FD_WANT_WRITE)
 

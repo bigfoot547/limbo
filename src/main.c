@@ -78,7 +78,7 @@ int main() {
 
     file_descriptor_t fd;
     memset(&fd, 0, sizeof(fd));
-    int newfd = 0;
+    int newfd = STDIN_FILENO;
     fd.fd = newfd;
     fd.read_handler = &con_read_handler;
     fd.error_handler = &con_error_handler;
@@ -95,6 +95,7 @@ int main() {
     for (int i = 0; i < 10; ++i) {
         pthread_join(pt[i], NULL);
     }
+    //(void)io_worker(NULL);
 
     event_loop_delfd(serv->fd);
     server_free(serv);

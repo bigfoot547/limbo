@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <arpa/inet.h>
+#include <sys/uio.h>
 
 void client_read_handler(file_descriptor_t *fd, void *handler_data);
 void client_write_handler(file_descriptor_t *fd, void *handler_data);
@@ -69,7 +70,7 @@ client_t *client_init(int sockfd, struct sockaddr *saddr, socklen_t saddrlen) {
         }
     }
 
-    client->should_delete = false;
+    client->sendq = NULL;
     // initialize more stuff here
     return client;
 }
@@ -83,6 +84,7 @@ void client_free(client_t *cli) {
     }
     free(cli->saddrstr);
     free(cli->recvpartial);
+    free(cli->sendq);
     free(cli);
 }
 
@@ -102,6 +104,7 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
     }
 
     if (cli->fd && cli->fd->fd != -1) {
+        cli->fd->state |= FD_CALL_COMPLETE;
         event_loop_delfd(cli->fd);
         close(cli->fd->fd);
         cli->fd->fd = -1;
@@ -141,7 +144,6 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
 
     if (setjmp(exlbl)) {
         client_disconnect(client, "Protocol error: %s", readlim.reason);
-        client->should_delete = true;
         free(readlim.reason);
         return;
     }
@@ -174,11 +176,9 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
             // TODO: Protocol compression
             if (pktlen <= 0) {
                 client_disconnect(client, "Protocol error: Suspicious packet length: %d <= 0", pktlen);
-                client->should_delete = true;
                 return;
             } else if (pktlen > CLIENT_PKTLEN_MAX) {
                 client_disconnect(client, "Protocol error: Packet is too long: %d > %d", pktlen, CLIENT_PKTLEN_MAX);
-                client->should_delete = true;
                 return;
             }
 
@@ -186,12 +186,12 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
                 // oh no partial read DDDDDD:
                 if ((size_t)pktlen > client->recvpartsz) {
                     client->recvpartsz = (size_t)pktlen;
-                    client->recvpartial = realloc(client->recvpartial, client->recvpartsz);
-                    if (!client->recvpartial) {
+                    void *newalloc = realloc(client->recvpartial, client->recvpartsz);
+                    if (!newalloc) {
                         client_disconnect(client, "Protocol error: Failed to increase recvpartial length (realloc returned NULL)");
-                        client->should_delete = true;
                         return;
                     }
+                    client->recvpartial = newalloc;
                 }
 
                 client->recvpartexsz = pktlen;
@@ -204,7 +204,6 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
                 proto_handle_incoming(client, bufcur, readlim_ptr);
                 if (readlim.remain > 0) {
                     client_disconnect(client, "Protocol error: Not all packet bytes consumed: %d > 0 (len %d)", readlim.remain, pktlen);
-                    client->should_delete = true;
                     return;
                 }
                 bufcur += pktlen;
@@ -214,30 +213,99 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
 
     if (readcnt == 0) {
         client_disconnect(client, "Disconnected");
-        client->should_delete = true;
         return;
     } else if (readcnt == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) fd->state &= ~FD_CAN_READ;
         else {
             client_disconnect(client, "Read error: %s", strerror(errno));
-            client->should_delete = true;
             return;
         }
     }
 }
 
+// 1 MB max SendQ
+#define CLIENT_MAX_SENDQ (1000000ul)
+
+void client_add_sendq(client_t *client, const unsigned char *buf, size_t length) {
+    if (client->sendqcur + length > client->sendqsz) {
+        log_debug("Resizing client sendq (%s): from %lu to %lu", client->saddrstr, client->sendqsz, client->sendqcur + length);
+        client->sendqsz = client->sendqcur + length;
+
+        if (client->sendqsz > CLIENT_MAX_SENDQ) {
+            client_disconnect(client, "Max send queue exceeded (%lu > %lu)", client->sendqsz, CLIENT_MAX_SENDQ);
+            return;
+        }
+
+        void *newsendq = realloc(client->sendq, client->sendqsz);
+        if (!newsendq) {
+            client_disconnect(client, "Protocol error: Failed to increase sendq length (realloc returned NULL)");
+            return;
+        }
+        client->sendq = newsendq;
+    }
+    memcpy(client->sendq + client->sendqcur, buf, length);
+    client->sendqcur += length;
+}
+
+void client_write(client_t *client, const unsigned char *buf, size_t length) {
+    if (client->fd->state & FD_CAN_WRITE) {
+        ssize_t writecnt;
+        while (length > 0 && (writecnt = write(client->fd->fd, buf, length)) > 0) {
+            buf += writecnt;
+            length -= writecnt;
+            if (writecnt == 0) log_debug("client_write: write returned 0");
+        }
+
+        if (writecnt < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                client->fd->state &= ~FD_CAN_WRITE;
+                if (length > 0) client_add_sendq(client, buf, length);
+            } else {
+                client_disconnect(client, "Write error: %s", strerror(errno));
+                return;
+            }
+        }
+    } else {
+        client_add_sendq(client, buf, length);
+    }
+}
+
 void client_write_handler(file_descriptor_t *fd, void *handler_data) {
+    client_t *client = handler_data;
+
     log_info("Writable");
+
+    // flush sendq (or as much of it as we can)
+    ssize_t writecnt;
+    unsigned char *writecur = client->sendq;
+    while (client->sendqcur > 0 && (writecnt = write(fd->fd, writecur, client->sendqcur)) > 0) {
+        writecur += writecnt;
+        client->sendqcur -= writecnt;
+        if (writecnt == 0) log_debug("client_write_handler: write returned 0");
+    }
+
+    if (writecnt < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (client->sendqcur == 0) return; // it's okay, we wrote what we need anyway
+            memmove(client->sendq, writecur, client->sendqsz - (writecur - client->sendq));
+        } else {
+            client_disconnect(client, "Write error: %s", strerror(errno));
+            return;
+        }
+    }
 }
 
 void client_error_handler(file_descriptor_t *fd, int error, void *handler_data) {
     client_t *client = handler_data;
+    (void)fd;
+
     if (error == 0) client_disconnect(client, "Disconnected");
     else client_disconnect(client, "Error on socket: %s", strerror(error));
-    client->should_delete = true;
 }
 
 void client_handle_complete(file_descriptor_t *fd, void *handler_data) {
     client_t *cli = handler_data;
-    if (cli->should_delete) client_free(cli);
+    (void)fd;
+
+    client_free(cli);
 }
