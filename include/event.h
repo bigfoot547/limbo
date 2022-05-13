@@ -10,6 +10,8 @@
 
 #define FD_WANT_ALL (FD_WANT_READ | FD_WANT_WRITE)
 
+#include <pthread.h>
+
 void event_loop_init();
 void event_loop_handle(int timeout);
 void event_loop_close();
@@ -18,6 +20,7 @@ void event_loop_close();
 typedef struct tag_file_descriptor {
     int fd;
     unsigned state;
+    pthread_mutex_t *handler_mutex;
 
     void *handler_data;
     void (*read_handler)(struct tag_file_descriptor *fd, void *handler_data);

@@ -32,6 +32,7 @@ void event_loop_handle(int timeout) {
     for (int i = 0; i < numevt; ++i, ++evt) {
 #ifdef SOCKET_ENGINE_EPOLL
         file_descriptor_t *fd = (file_descriptor_t *)(evt->data.ptr);
+        if (fd->handler_mutex) pthread_mutex_lock(fd->handler_mutex);
 
         if (evt->events & EPOLLERR) {
             int error;
@@ -72,6 +73,7 @@ void event_loop_handle(int timeout) {
         if (fd->state & FD_CALL_COMPLETE && fd->handle_complete) (*fd->handle_complete)(fd, fd->handler_data);
         else {
             event_loop_want(fd, fd->state); // rearm fd
+            if (fd->handler_mutex) pthread_mutex_unlock(fd->handler_mutex);
         }
 #endif
     }

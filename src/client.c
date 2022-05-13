@@ -24,7 +24,13 @@ client_t *client_init(int sockfd, struct sockaddr *saddr, socklen_t saddrlen) {
     memset(fd, 0, sizeof(file_descriptor_t));
     memset(client, 0, sizeof(client_t));
 
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&client->evtmutex, &attr);
+
     fd->fd = sockfd;
+    fd->handler_mutex = &client->evtmutex;
     fd->handler_data = client;
     fd->read_handler = &client_read_handler;
     fd->write_handler = &client_write_handler;
@@ -103,6 +109,7 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
         free(dcmsg);
     }
 
+    pthread_mutex_lock(&cli->evtmutex);
     if (cli->fd && cli->fd->fd != -1) {
         cli->fd->state |= FD_CALL_COMPLETE;
         event_loop_delfd(cli->fd);
@@ -114,6 +121,7 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
         dll_removenode(cli->clients, cli->mypos);
         cli->mypos = NULL;
     }
+    pthread_mutex_unlock(&cli->evtmutex);
 }
 
 #define CLIENT_READBUF_SZ (4096)
@@ -248,6 +256,7 @@ void client_add_sendq(client_t *client, const unsigned char *buf, size_t length)
 }
 
 void client_write(client_t *client, const unsigned char *buf, size_t length) {
+    pthread_mutex_lock(&client->evtmutex);
     if (client->fd->state & FD_CAN_WRITE) {
         ssize_t writecnt;
         while (length > 0 && (writecnt = write(client->fd->fd, buf, length)) > 0) {
@@ -259,15 +268,21 @@ void client_write(client_t *client, const unsigned char *buf, size_t length) {
         if (writecnt < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 client->fd->state &= ~FD_CAN_WRITE;
+                // make sure the event loop knows we want a write again
+                // TODO: test for race conditions
+                event_loop_want(client->fd, client->fd->state);
                 if (length > 0) client_add_sendq(client, buf, length);
             } else {
                 client_disconnect(client, "Write error: %s", strerror(errno));
-                return;
+                goto writedone;
             }
         }
     } else {
         client_add_sendq(client, buf, length);
     }
+
+writedone:
+    pthread_mutex_unlock(&client->evtmutex);
 }
 
 void client_write_handler(file_descriptor_t *fd, void *handler_data) {

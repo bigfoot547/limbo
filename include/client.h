@@ -9,9 +9,12 @@
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <pthread.h>
 
 typedef struct tag_client {
     file_descriptor_t *fd;
+    pthread_mutex_t evtmutex;
+
     sockaddrs saddr;
     socklen_t saddrlen;
     char *saddrstr;
