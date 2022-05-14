@@ -6,7 +6,8 @@ set(${PROJECT_NAME}_SOURCES
     list.c
     client.c
     utils.c
-    protocol.c)
+    protocol.c
+    packet.c)
 
 list(TRANSFORM ${PROJECT_NAME}_SOURCES PREPEND src/)
 

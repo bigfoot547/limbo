@@ -77,6 +77,10 @@ client_t *client_init(int sockfd, struct sockaddr *saddr, socklen_t saddrlen) {
     }
 
     client->sendq = NULL;
+
+    client->protocol_ver = PROTOVER_UNSET;
+    client->protocol = PROTOCOL_HANDSHAKE;
+
     // initialize more stuff here
     return client;
 }
@@ -88,6 +92,7 @@ void client_free(client_t *cli) {
         if (cli->fd->fd != -1) client_disconnect(cli, "Client destroyed");
         free(cli->fd);
     }
+    pthread_mutex_destroy(&cli->evtmutex);
     free(cli->saddrstr);
     free(cli->recvpartial);
     free(cli->sendq);
@@ -136,23 +141,23 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
     unsigned char *bufcur;
     ssize_t readcnt, remain;
 
-    volatile struct proto_read_limit readlim;
+    volatile struct read_context readctx;
 
     /* It's okay to cast away the volatile quantifier here because it is marked volatile
-     * to prevent UB with setjmp/longjmp. If values in readlim are cached in registers, they
+     * to prevent UB with setjmp/longjmp. If values in readctx are cached in registers, they
      * may not be restored properly when longjmp() is called. If we use the volatile struct
      * in the "exception handler" (below if statement), the register caching optimization is
      * squashed, and it doesn't matter if proto_* functions do this caching, as they aren't
      * called after setjmp(). */
-    struct proto_read_limit *readlim_ptr = (struct proto_read_limit *)&readlim;
+    struct read_context *readctx_ptr = (struct read_context *)&readctx;
     jmp_buf exlbl;
 
-    readlim.reason = NULL;
-    readlim.errlbl = &exlbl;
+    readctx.reason = NULL;
+    readctx.errlbl = &exlbl;
 
     if (setjmp(exlbl)) {
-        client_disconnect(client, "Protocol error: %s", readlim.reason);
-        free(readlim.reason);
+        client_disconnect(client, "Protocol error: %s", readctx.reason);
+        free(readctx.reason);
         return;
     }
 
@@ -167,18 +172,18 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
             } else {
                 memcpy(client->recvpartial + client->recvpartcur, buf, partremain);
                 bufcur += partremain;
-                readlim.remain = (int32_t)client->recvpartexsz;
+                readctx.remain = (int32_t)client->recvpartexsz;
                 client->recvpartexsz = client->recvpartcur = 0; // packet complete
 
                 // cast away the volatile qualifier (it is ok because trust me)
-                proto_handle_incoming(client, client->recvpartial, readlim_ptr);
+                proto_handle_incoming(client, client->recvpartial, readctx_ptr);
             }
         }
 
         // the remain variable MUST be updated after a set of reads, if it is to be used again
         for (remain = readcnt - (bufcur - buf); remain > 0; remain = readcnt - (bufcur - buf)) { // there are bytes to process
-            readlim.remain = remain;
-            int32_t pktlen = proto_read_varint(&bufcur, readlim_ptr);
+            readctx.remain = remain;
+            int32_t pktlen = proto_read_varint(&bufcur, readctx_ptr);
             remain = readcnt - (bufcur - buf);
 
             // TODO: Protocol compression
@@ -208,10 +213,10 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
                 client->recvpartcur = remain;
                 break;
             } else {
-                readlim.remain = pktlen;
-                proto_handle_incoming(client, bufcur, readlim_ptr);
-                if (readlim.remain > 0) {
-                    client_disconnect(client, "Protocol error: Not all packet bytes consumed: %d > 0 (len %d)", readlim.remain, pktlen);
+                readctx.remain = pktlen;
+                proto_handle_incoming(client, bufcur, readctx_ptr);
+                if (readctx.remain > 0) {
+                    client_disconnect(client, "Protocol error: Not all packet bytes consumed: %d > 0 (len %d)", readctx.remain, pktlen);
                     return;
                 }
                 bufcur += pktlen;

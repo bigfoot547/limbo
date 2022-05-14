@@ -3,6 +3,7 @@
 
 #include <sys/un.h>
 #include <netinet/in.h>
+#include <stdint.h>
 
 typedef union {
     struct sockaddr base;
@@ -11,5 +12,8 @@ typedef union {
     struct sockaddr_un un;
     struct sockaddr_storage storage;
 } sockaddrs;
+
+typedef uint32_t protover_t;
+#define PROTOVER_UNSET (protover_t)(-1)
 
 #endif // include guard

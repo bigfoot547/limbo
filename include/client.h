@@ -10,8 +10,14 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <pthread.h>
+#include <stdint.h>
 
-typedef struct tag_client {
+struct tag_client;
+typedef struct tag_client client_t;
+
+#include "protocol.h"
+
+struct tag_client {
     file_descriptor_t *fd;
     pthread_mutex_t evtmutex;
 
@@ -25,11 +31,14 @@ typedef struct tag_client {
     unsigned char *sendq;
     size_t sendqcur, sendqsz;
 
+    protover_t protocol_ver;
+    unsigned protocol;
+
     bool should_delete;
 
     dllist_t *clients;
     struct list_dlnode *mypos;
-} client_t;
+};
 
 client_t *client_init(int fd, struct sockaddr *saddr, socklen_t saddrlen);
 void client_free(client_t *cli);
