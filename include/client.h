@@ -34,6 +34,7 @@ struct tag_client {
     protover_t protocol_ver;
     unsigned protocol;
 
+    bool dc_on_write;
     bool should_delete;
 
     dllist_t *clients;
@@ -45,5 +46,6 @@ void client_free(client_t *cli);
 
 void client_disconnect(client_t *cli, const char *fmt, ...);
 void client_write(client_t *client, const unsigned char *buf, size_t length);
+void client_write_pkt(client_t *client, void *pkt);
 
 #endif // include guard

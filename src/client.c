@@ -100,18 +100,20 @@ void client_free(client_t *cli) {
 }
 
 void client_disconnect(client_t *cli, const char *fmt, ...) {
-    va_list va;
-    char *dcmsg = NULL;
+    if (fmt) {
+        va_list va;
+        char *dcmsg = NULL;
 
-    va_start(va, fmt);
-    int res = vsprintf_alloc(&dcmsg, fmt, va);
-    va_end(va);
+        va_start(va, fmt);
+        int res = vsprintf_alloc(&dcmsg, fmt, va);
+        va_end(va);
 
-    if (res < 0) {
-        log_info("Disconnecting client (%s): (client_disconnect: vsprintf_alloc returned %d)", cli->saddrstr, res);
-    } else {
-        log_info("Disconnecting client (%s): %s", cli->saddrstr, dcmsg);
-        free(dcmsg);
+        if (res < 0) {
+            log_info("Disconnecting client (%s): (client_disconnect: vsprintf_alloc returned %d)", cli->saddrstr, res);
+        } else {
+            log_info("Disconnecting client (%s): %s", cli->saddrstr, dcmsg);
+            free(dcmsg);
+        }
     }
 
     pthread_mutex_lock(&cli->evtmutex);
@@ -131,8 +133,8 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
 
 #define CLIENT_READBUF_SZ (4096)
 
-// increase to something bigger if you want to support 1.7.10
-#define CLIENT_PKTLEN_MAX (32768)
+// may need to be bigger
+#define CLIENT_PKTLEN_MAX (65536)
 
 void client_read_handler(file_descriptor_t *fd, void *handler_data) {
     client_t * const client = handler_data;
@@ -156,7 +158,10 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
     readctx.errlbl = &exlbl;
 
     if (setjmp(exlbl)) {
-        client_disconnect(client, "Protocol error: %s", readctx.reason);
+        if (readctx.reason)
+            client_disconnect(client, "Protocol error: %s", readctx.reason);
+        else
+            client_disconnect(client, NULL);
         free(readctx.reason);
         return;
     }
@@ -183,6 +188,7 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
         // the remain variable MUST be updated after a set of reads, if it is to be used again
         for (remain = readcnt - (bufcur - buf); remain > 0; remain = readcnt - (bufcur - buf)) { // there are bytes to process
             readctx.remain = remain;
+            // check for FE 01 FA (legacy ping) here
             int32_t pktlen = proto_read_varint(&bufcur, readctx_ptr);
             remain = readcnt - (bufcur - buf);
 
@@ -286,8 +292,37 @@ void client_write(client_t *client, const unsigned char *buf, size_t length) {
         client_add_sendq(client, buf, length);
     }
 
+    if (client->dc_on_write && client->sendqcur == 0) {
+        client_disconnect(client, NULL);
+        log_debug("Disconnecting client %s, dc_on_write was set.", client->saddrstr);
+    }
+
 writedone:
     pthread_mutex_unlock(&client->evtmutex);
+}
+
+void client_write_pkt(client_t *client, void *pkt) {
+    struct packet_base *bpkt = pkt;
+    packet_write_proc *proc = client_write_protos[client->protocol][bpkt->id];
+
+    struct auto_buffer pkt_writebuf, pkt_writebuf2;
+    ab_init(&pkt_writebuf, 0, 0);
+    proto_write_varint(&pkt_writebuf, bpkt->id);
+    if (proc) (*proc)(client, &pkt_writebuf, bpkt);
+
+    size_t pktlen = ab_getwrcur(&pkt_writebuf);
+    ab_init(&pkt_writebuf2, pktlen + 7, 0);
+    proto_write_varint(&pkt_writebuf2, (int32_t)pktlen);
+    ab_push2(&pkt_writebuf2, pkt_writebuf.buf, pktlen);
+    for (size_t i = 0; i < ab_getwrcur(&pkt_writebuf2); ++i) {
+        printf("%02hhx", pkt_writebuf2.buf[i]);
+        if (i && i % 10 == 0) putchar('\n');
+        else putchar(' ');
+    }
+    putchar('\n');
+    client_write(client, pkt_writebuf2.buf, ab_getwrcur(&pkt_writebuf2));
+    ab_free(&pkt_writebuf2);
+    ab_free(&pkt_writebuf);
 }
 
 void client_write_handler(file_descriptor_t *fd, void *handler_data) {
@@ -301,12 +336,18 @@ void client_write_handler(file_descriptor_t *fd, void *handler_data) {
     while (client->sendqcur > 0 && (writecnt = write(fd->fd, writecur, client->sendqcur)) > 0) {
         writecur += writecnt;
         client->sendqcur -= writecnt;
-        if (writecnt == 0) log_debug("client_write_handler: write returned 0");
+        if (writecnt == 0) log_debug("client_write_handler: write returned 0"); // how does this happen?
     }
 
     if (writecnt < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            if (client->sendqcur == 0) return; // it's okay, we wrote what we need anyway
+            if (client->sendqcur == 0) {
+                if (client->dc_on_write) {
+                    log_debug("Disconnecting client %s, dc_on_write was set.", client->saddrstr);
+                    client_disconnect(client, NULL);
+                }
+                return;
+            }
             memmove(client->sendq, writecur, client->sendqsz - (writecur - client->sendq));
         } else {
             client_disconnect(client, "Write error: %s", strerror(errno));
