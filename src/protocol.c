@@ -140,6 +140,13 @@ void proto_handle_incoming(void *client, unsigned char *buf, struct read_context
     }
 }
 
+const char *const protocol_names[] = {
+    "Handshake",
+    "Status",
+    "Login",
+    "Play"
+};
+
 int proto_write_byte(struct auto_buffer *buf, int8_t val) {
     return ab_push(buf, &val, sizeof(val));
 }

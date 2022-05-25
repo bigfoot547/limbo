@@ -11,11 +11,11 @@
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/fcntl.h>
 
 volatile bool shutdown_server = false;
 
 void con_read_handler(file_descriptor_t *fd, void *d) {
-    log_info("Console readable! :D");
     char buf[4096];
     ssize_t numread = 0;
     while (true) {
@@ -33,7 +33,10 @@ void con_read_handler(file_descriptor_t *fd, void *d) {
             write(1, buf, numread);
             if (!strncmp(buf, "stop", 4)) {
                 shutdown_server = true;
+                event_loop_delfd(fd);
+                close(fd->fd);
                 log_info("Shutdown flag set. The program should be ending in <5 seconds.");
+                break;
             }
         }
     }
@@ -69,30 +72,26 @@ int main() {
 
     serv->clients = clients;
 
-    //if (!server_init("localhost", 25565, &serv1)) {
-    //    log_error("failed aaa");
-    //    return 1;
-    //}
-
     event_loop_want(serv->fd, FD_WANT_READ);
 
     file_descriptor_t fd;
     memset(&fd, 0, sizeof(fd));
-    int newfd = STDIN_FILENO;
+    int newfd = dup(STDIN_FILENO);
     fd.fd = newfd;
     fd.read_handler = &con_read_handler;
     fd.error_handler = &con_error_handler;
-    if (make_fd_nonblock(newfd) < 0) {
+    if (fcntl(newfd, F_SETFL, fcntl(newfd, F_GETFL) | O_NONBLOCK) < 0) {
         log_error("error: %s", strerror(errno));
     }
     event_loop_want(&fd, FD_WANT_READ);
 
-    pthread_t pt[10];
-    for (int i = 0; i < 10; ++i) {
+#define THREAD_CNT (10)
+    pthread_t pt[THREAD_CNT];
+    for (int i = 0; i < THREAD_CNT; ++i) {
         pthread_create(pt + i, NULL, &io_worker, (void *)(unsigned long long)i);
     }
 
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < THREAD_CNT; ++i) {
         pthread_join(pt[i], NULL);
     }
     //(void)io_worker(NULL);

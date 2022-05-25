@@ -8,7 +8,9 @@ set(${PROJECT_NAME}_SOURCES
     utils.c
     protocol.c
     packet.c
-    endianutils.c)
+    endianutils.c
+    chat.c
+    uuid.c)
 
 list(TRANSFORM ${PROJECT_NAME}_SOURCES PREPEND src/)
 

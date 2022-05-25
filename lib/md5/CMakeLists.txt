@@ -1,0 +1,8 @@
+set(PROJECT_NAME md5)
+set(TARGET_NAME ${PROJECT_NAME})
+
+project(${PROJECT_NAME})
+
+add_library(${TARGET_NAME} STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/md5.c)
+set(md5_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(${TARGET_NAME} PUBLIC ${md5_INCLUDE_DIR})

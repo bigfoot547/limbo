@@ -3,6 +3,7 @@
 #include <unistd.h> // for close
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <errno.h>
 
 #ifdef SOCKET_ENGINE_EPOLL
 #include <sys/epoll.h>
@@ -26,6 +27,10 @@ void event_loop_init() {
 void event_loop_handle(int timeout) {
 #ifdef SOCKET_ENGINE_EPOLL
     int numevt = epoll_wait(sefd, events, MAX_EVENTS, timeout);
+    if (numevt < 0) {
+        log_error("epoll_wait error: %s", strerror(errno));
+        return;
+    }
 #endif
 
     fd_event_t *evt = events;

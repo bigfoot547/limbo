@@ -5,6 +5,7 @@
 #include "event.h"
 #include "server.h"
 #include "list.h"
+#include "player.h"
 
 #include <netinet/in.h>
 #include <stdbool.h>
@@ -33,6 +34,8 @@ struct tag_client {
 
     protover_t protocol_ver;
     unsigned protocol;
+
+    player_t *player;
 
     bool dc_on_write;
     bool should_delete;

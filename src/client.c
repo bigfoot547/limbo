@@ -2,6 +2,7 @@
 #include "log.h"
 #include "utils.h"
 #include "protocol.h"
+#include "macros.h"
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -96,6 +97,7 @@ void client_free(client_t *cli) {
     free(cli->saddrstr);
     free(cli->recvpartial);
     free(cli->sendq);
+    free(cli->player);
     free(cli);
 }
 
@@ -108,10 +110,11 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
         int res = vsprintf_alloc(&dcmsg, fmt, va);
         va_end(va);
 
+        unsigned level = (cli->protocol > PROTOCOL_STATUS) ? LOG_INFO : LOG_DEBUG;
         if (res < 0) {
-            log_info("Disconnecting client (%s): (client_disconnect: vsprintf_alloc returned %d)", cli->saddrstr, res);
+            log_log(level, "Disconnecting client (%s) (%s): (client_disconnect: vsprintf_alloc returned %d)", cli->saddrstr, protocol_names[cli->protocol], res);
         } else {
-            log_info("Disconnecting client (%s): %s", cli->saddrstr, dcmsg);
+            log_log(level, "Disconnecting client (%s) (%s): %s", cli->saddrstr, protocol_names[cli->protocol], dcmsg);
             free(dcmsg);
         }
     }
@@ -138,7 +141,6 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
 
 void client_read_handler(file_descriptor_t *fd, void *handler_data) {
     client_t * const client = handler_data;
-    log_info("Readable");
     unsigned char buf[CLIENT_READBUF_SZ];
     unsigned char *bufcur;
     ssize_t readcnt, remain;
@@ -304,22 +306,23 @@ writedone:
 void client_write_pkt(client_t *client, void *pkt) {
     struct packet_base *bpkt = pkt;
     packet_write_proc *proc = client_write_protos[client->protocol][bpkt->id];
+    if (!proc) {
+        log_error("BUG: Attempted to write a %s packet to %s with unsupported ID %d!", protocol_names[client->protocol], client->saddrstr, bpkt->id);
+#ifdef BUILD_DEBUG
+        abort();
+#endif
+        return;
+    }
 
     struct auto_buffer pkt_writebuf, pkt_writebuf2;
     ab_init(&pkt_writebuf, 0, 0);
     proto_write_varint(&pkt_writebuf, bpkt->id);
-    if (proc) (*proc)(client, &pkt_writebuf, bpkt);
+    (*proc)(client, &pkt_writebuf, bpkt);
 
     size_t pktlen = ab_getwrcur(&pkt_writebuf);
     ab_init(&pkt_writebuf2, pktlen + 7, 0);
     proto_write_varint(&pkt_writebuf2, (int32_t)pktlen);
     ab_push2(&pkt_writebuf2, pkt_writebuf.buf, pktlen);
-    for (size_t i = 0; i < ab_getwrcur(&pkt_writebuf2); ++i) {
-        printf("%02hhx", pkt_writebuf2.buf[i]);
-        if (i && i % 10 == 0) putchar('\n');
-        else putchar(' ');
-    }
-    putchar('\n');
     client_write(client, pkt_writebuf2.buf, ab_getwrcur(&pkt_writebuf2));
     ab_free(&pkt_writebuf2);
     ab_free(&pkt_writebuf);
@@ -327,8 +330,6 @@ void client_write_pkt(client_t *client, void *pkt) {
 
 void client_write_handler(file_descriptor_t *fd, void *handler_data) {
     client_t *client = handler_data;
-
-    log_info("Writable");
 
     // flush sendq (or as much of it as we can)
     ssize_t writecnt;
@@ -358,7 +359,7 @@ void client_write_handler(file_descriptor_t *fd, void *handler_data) {
 
 void client_error_handler(file_descriptor_t *fd, int error, void *handler_data) {
     client_t *client = handler_data;
-    (void)fd;
+    UNUSED(fd);
 
     if (error == 0) client_disconnect(client, "Disconnected");
     else client_disconnect(client, "Error on socket: %s", strerror(error));
@@ -366,7 +367,7 @@ void client_error_handler(file_descriptor_t *fd, int error, void *handler_data) 
 
 void client_handle_complete(file_descriptor_t *fd, void *handler_data) {
     client_t *cli = handler_data;
-    (void)fd;
+    UNUSED(fd);
 
     client_free(cli);
 }

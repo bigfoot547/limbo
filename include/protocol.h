@@ -6,6 +6,7 @@
 #include <setjmp.h>
 #include "types.h"
 #include "utils.h"
+#include "player.h"
 
 struct read_context {
     int32_t remain;
@@ -48,6 +49,8 @@ enum client_protocol {
     PROTOCOL_PLAY
 };
 
+extern const char *const protocol_names[4];
+
 extern packet_proc *const client_protos[][4 /*number of protocols*/];
 extern const int32_t client_proto_maxids[];
 
@@ -76,6 +79,8 @@ int proto_write_lenstr(struct auto_buffer *buf, const char *str, int32_t len);
 #define PKTID_WRITE_STATUS_RESPONSE (0x00)
 #define PKTID_WRITE_STATUS_PONG     (0x01)
 
+#define PKTID_WRITE_LOGIN_SUCCESS   (0x02)
+
 // clientbound packet definitions
 #define PACKET_COMMON_FIELDS \
     int32_t id;
@@ -95,6 +100,11 @@ struct packet_status_response {
 struct packet_status_pong {
     PACKET_COMMON_FIELDS
     int64_t payload;
+};
+
+struct packet_login_success {
+    PACKET_COMMON_FIELDS
+    struct game_profile *profile;
 };
 
 #endif // include guard

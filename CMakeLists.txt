@@ -41,6 +41,13 @@ if(NOT CMAKE_USE_PTHREADS_INIT)
     message(FATAL_ERROR "*** This program must use a pthread-compatible threads library. Sorry.")
 endif()
 
+find_package(Iconv REQUIRED)
+target_link_libraries(${SERVER_TARGET_NAME} PRIVATE Iconv::Iconv)
+target_include_directories(${SERVER_TARGET_NAME} PRIVATE ${Iconv_INCLUDE_DIR})
+
+add_subdirectory(lib/md5)
+target_link_libraries(${SERVER_TARGET_NAME} PRIVATE md5)
+
 include(CheckSymbolExists)
 check_symbol_exists(epoll_create "sys/epoll.h" HAS_EPOLL_CREATE)
 
