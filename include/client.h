@@ -41,6 +41,7 @@ struct tag_client {
     struct timespec lastping;
     bool pingrespond;
     int32_t pingid;
+    int64_t latency_ms;
 
     bool dc_on_write;
     bool should_delete;

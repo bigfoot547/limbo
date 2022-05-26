@@ -66,8 +66,8 @@ void con_error_handler(file_descriptor_t *fd, int error, void *d) {
 void *io_worker(void *arg) {
     while (!shutdown_server) {
         event_loop_handle(5000);
-        log_debug("handle complete on thread %d", (int)(unsigned long long)arg);
     }
+    log_debug("handle complete on thread %d", (int)(unsigned long long)arg);
     return NULL;
 }
 

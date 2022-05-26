@@ -90,6 +90,7 @@ client_t *client_init(int sockfd, struct sockaddr *saddr, socklen_t saddrlen) {
         log_error("client_init(%s): sched_timer_wgettime failed when setting lastping: %s", strerror(errno));
     }
     client->pingrespond = true;
+    client->latency_ms = -1;
 
     // initialize more stuff here
     return client;

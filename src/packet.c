@@ -178,11 +178,16 @@ void proto_play_keep_alive(void *client, int32_t pktid, unsigned char *buf, stru
 
     if (sender->pingrespond) PROTOCOL_ERROR(ctx, "Already replied to a keep alive");
     if (payload != sender->pingid) PROTOCOL_ERROR(ctx, "Invalid keep alive ID (expected %d, got %d)", sender->pingid, payload);
+    sender->pingrespond = true;
 
-    if (sched_timer_wgettime(CLOCK_MONOTONIC, &sender->lastping) < 0) {
+    struct timespec now, diff;
+    if (sched_timer_wgettime(CLOCK_MONOTONIC, &now) < 0) {
         log_error("proto_play_keep_alive: sched_timer_wgettime failed: %s", strerror(errno));
     }
-    sender->pingrespond = true;
+
+    sched_timespec_sub(&now, &sender->lastping, &diff);
+    memcpy(&sender->lastping, &now, sizeof(struct timespec));
+    sender->latency_ms = diff.tv_sec * 1000 + diff.tv_nsec / 1000000;
 }
 
 packet_proc *const client_proto_handshake[] = {
