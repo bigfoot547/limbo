@@ -102,6 +102,12 @@ void client_free(client_t *cli) {
         if (cli->fd->fd != -1) client_disconnect_internal(cli, "Client destroyed");
         free(cli->fd);
     }
+
+    if (cli->mypos) {
+        dll_removenode(cli->clients, cli->mypos);
+        cli->mypos = NULL;
+    }
+
     pthread_mutex_destroy(&cli->evtmutex);
     free(cli->saddrstr);
     free(cli->recvpartial);
@@ -235,6 +241,7 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
             if (pktlen > remain) {
                 // oh no partial read DDDDDD:
                 if ((size_t)pktlen > client->recvpartsz) {
+                    log_debug("Resizing client recvq (%s): from %lu to %d", client->saddrstr, client->recvpartsz, pktlen);
                     client->recvpartsz = (size_t)pktlen;
                     void *newalloc = realloc(client->recvpartial, client->recvpartsz);
                     if (!newalloc) {

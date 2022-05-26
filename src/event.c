@@ -1,4 +1,6 @@
 #include "event.h"
+#include "log.h"
+
 #include <string.h> // for memset
 #include <unistd.h> // for close
 #include <sys/types.h>
@@ -15,7 +17,6 @@ typedef struct epoll_event fd_event_t;
 int sefd;
 fd_event_t events[MAX_EVENTS];
 
-#include "log.h"
 void event_loop_init() {
     memset(events, 0, sizeof(events));
 

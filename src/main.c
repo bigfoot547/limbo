@@ -19,6 +19,17 @@
 #include <unistd.h>
 #include <sys/fcntl.h>
 
+/* TODO
+    - Config file
+    - Send chunks to client
+    - Maximum fd (client) count configurable
+    - Console handler for commands
+    - Protocol compression
+    - Handle bungeecord ip forwarding
+    - Stop naively handling minecraft's encoding (iconv does not have java's fancy utf-8 thing)
+    - Make all handler threads listen on a pipe so they can be woken up
+*/
+
 volatile bool shutdown_server = false;
 
 void con_read_handler(file_descriptor_t *fd, void *d) {
@@ -92,8 +103,6 @@ void *tick_worker(void *cl) {
 // helper macro to disconnect a client without breaking stuff
 #define CLIENT_DISCONNECT(_cli, _fmt, ...)         \
 client_disconnect((_cli), (_fmt), ## __VA_ARGS__); \
-dll_removenode(clients, (_cli)->mypos);            \
-(_cli)->mypos = NULL;                              \
                                                    \
 pthread_mutex_unlock(&(_cli)->evtmutex);           \
 pthread_mutex_lock(&(_cli)->evtmutex);             \
@@ -188,11 +197,6 @@ int main(void) {
     DLLIST_FOREACH(clients, cur) {
         client_t *cli = cur->ptr;
         client_disconnect(cli, "Shutting down");
-
-        /* The client_free call assumes the client has already been removed from the
-           list because its fd is invalid, but client_disconnect doesn't do that.
-           It's okay because dll_free empties the list.
-         */
         client_free(cli);
     } DLLIST_FOREACH_DONE(clients);
     dll_free(clients);
