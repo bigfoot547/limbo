@@ -140,7 +140,7 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
 #define CLIENT_PKTLEN_MAX (65536)
 
 void client_read_handler(file_descriptor_t *fd, void *handler_data) {
-    client_t * const client = handler_data;
+    client_t *const client = handler_data;
     unsigned char buf[CLIENT_READBUF_SZ];
     unsigned char *bufcur;
     ssize_t readcnt, remain;
@@ -156,6 +156,7 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
     struct read_context *readctx_ptr = (struct read_context *)&readctx;
     jmp_buf exlbl;
 
+    readctx.protover = client->protocol_ver;
     readctx.reason = NULL;
     readctx.errlbl = &exlbl;
 

@@ -54,8 +54,18 @@ void *io_worker(void *arg) {
     return NULL;
 }
 
+void *tick_worker(void *arg) {
+    UNUSED(arg);
+
+    while (!shutdown_server) {
+        
+    }
+
+    return NULL;
+}
+
 // TODO: Handle (ignore) SIGPIPE and handle SIGINT
-int main() {
+int main(void) {
     setlocale(LC_ALL, "");
 
     log_setlevel(LOG_DEBUG);

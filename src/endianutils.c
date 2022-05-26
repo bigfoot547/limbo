@@ -39,6 +39,7 @@ uint64_t eu_swapu64(uint64_t in) {
         |  (in << 56);
 }
 
+// TODO: make these macros
 #define SWAP_FUNC(_bits)                                          \
 uint ## _bits ## _t eu_htobeu ## _bits(uint ## _bits ## _t val) { \
     switch (eu_endian()) {                                        \

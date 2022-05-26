@@ -126,23 +126,65 @@ void proto_login_start(void *client, int32_t pktid, unsigned char *buf, struct r
     sender->protocol = PROTOCOL_PLAY;
 
     // TODO: send play packets to initialize the player
+    struct packet_play_join_game jgpkt = {
+        .id = PKTID_WRITE_PLAY_JOIN_GAME,
+        .peid = 1,
+        .gamemode = 0,
+        .dimension = 1,
+        .difficulty = 2,
+        .max_players = 60,
+        .level_type = "default",
+        .reduced_dbg_info = false
+    };
+
+    struct packet_play_spawn_position sppkt = {
+        .id = PKTID_WRITE_PLAY_SPAWN_POS,
+        .pos = {
+            .x = 0,
+            .y = 64,
+            .z = 0
+        }
+    };
+
+    struct packet_play_player_position_look pplpkt = {
+        .id = PKTID_WRITE_PLAY_PLAYER_POS_LOOK,
+        .x = 0,
+        .y = 64,
+        .z = 0,
+        .yaw = 0,
+        .pitch = 0,
+        .flags = 0x0
+    };
+
+    client_write_pkt(sender, &jgpkt);
+    client_write_pkt(sender, &sppkt);
+    client_write_pkt(sender, &pplpkt);
 }
 
-packet_proc *const client_protos[][4 /*number of protocols*/] = {
- // Handshake
- { &proto_handshake_unk, &proto_handshake_set_protocol },
-
- // Status
- { &proto_ignore, &proto_status_request, &proto_status_ping },
-
- // Login
- { &proto_ignore, &proto_login_start },
-
- // Play
- { &proto_ignore }
+packet_proc *const client_proto_handshake[] = {
+    &proto_handshake_unk, &proto_handshake_set_protocol
 };
 
-const int32_t client_proto_maxids[] = { 0, 1, 0, -1 };
+packet_proc *const client_proto_status[] = {
+    &proto_ignore, &proto_status_request, &proto_status_ping
+};
+
+packet_proc *const client_proto_login[] = {
+    &proto_ignore, &proto_login_start
+};
+
+packet_proc *const client_proto_play[] = {
+    &proto_ignore
+};
+
+packet_proc *const *client_protos[PROTOCOL_COUNT] = {
+    client_proto_handshake,
+    client_proto_status,
+    client_proto_login,
+    client_proto_play
+};
+
+const int32_t client_proto_maxids[PROTOCOL_COUNT] = { 0, 1, 0, -1 };
 
 void proto_write_status_response(void *client, struct auto_buffer *buf, struct packet_base *pkt) {
     UNUSED(client);
@@ -166,8 +208,53 @@ void proto_write_login_success(void *client, struct auto_buffer *buf, struct pac
     proto_write_lenstr(buf, rpkt->profile->name, -1);
 }
 
-packet_write_proc *const client_write_protos[][4] = {
- { NULL },
- { &proto_write_status_response, &proto_write_status_pong },
- { NULL, NULL, &proto_write_login_success }
+void proto_write_play_join_game(void *client, struct auto_buffer *buf, struct packet_base *pkt) {
+    UNUSED(client);
+    struct packet_play_join_game *rpkt = (struct packet_play_join_game *)pkt;
+
+    proto_write_int(buf, rpkt->peid);
+    proto_write_ubyte(buf, rpkt->gamemode);
+    proto_write_byte(buf, rpkt->dimension);
+    proto_write_ubyte(buf, rpkt->difficulty);
+    proto_write_ubyte(buf, rpkt->max_players);
+    proto_write_lenstr(buf, rpkt->level_type, -1);
+    proto_write_bool(buf, rpkt->reduced_dbg_info);
+}
+
+void proto_write_play_spawn_pos(void *client, struct auto_buffer *buf, struct packet_base *pkt) {
+    UNUSED(client);
+    struct packet_play_spawn_position *rpkt = (struct packet_play_spawn_position *)pkt;
+
+    proto_write_blockpos(buf, &rpkt->pos);
+}
+
+void proto_write_play_player_pos_look(void *client, struct auto_buffer *buf, struct packet_base *pkt) {
+    UNUSED(client);
+    struct packet_play_player_position_look *rpkt = (struct packet_play_player_position_look *)pkt;
+
+    proto_write_double(buf, rpkt->x);
+    proto_write_double(buf, rpkt->y);
+    proto_write_double(buf, rpkt->z);
+    proto_write_float(buf, rpkt->yaw);
+    proto_write_float(buf, rpkt->pitch);
+    proto_write_ubyte(buf, rpkt->flags);
+}
+
+packet_write_proc *const client_write_proto_status[] = {
+    &proto_write_status_response, &proto_write_status_pong
+};
+
+packet_write_proc *const client_write_proto_login[] = {
+    NULL, NULL, &proto_write_login_success
+};
+
+packet_write_proc *const client_write_proto_play[] = {
+    NULL, &proto_write_play_join_game, NULL, NULL, NULL, &proto_write_play_spawn_pos, NULL, NULL, &proto_write_play_player_pos_look
+};
+
+packet_write_proc *const *client_write_protos[] = {
+    NULL,
+    client_write_proto_status,
+    client_write_proto_login,
+    client_write_proto_play
 };

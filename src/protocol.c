@@ -30,6 +30,11 @@ uint8_t proto_read_ubyte_unchecked(unsigned char **buf, struct read_context *ctx
     return (uint8_t)*((*buf)++);
 }
 
+bool proto_read_bool(unsigned char **buf, struct read_context *ctx) {
+    REMAIN_CHECK(ctx, 1, "Packet buffer depleted reading bool: %d < 1", ctx->remain);
+    return !!proto_read_ubyte_unchecked(buf, ctx);
+}
+
 #define READ_BYTE_F(_type, _fname)                                                \
 _type proto_read_ ## _fname(unsigned char **buf, struct read_context *ctx) {      \
     REMAIN_CHECK(ctx, sizeof(_type), "Packet buffer depleted reading " #_type     \
@@ -86,7 +91,6 @@ int32_t proto_read_varint(unsigned char **buf, struct read_context *ctx) {
     PROTOCOL_ERROR(ctx, "VarInt too big");
 }
 
-
 int64_t proto_read_varlong(unsigned char **buf, struct read_context *ctx) {
     int64_t ret = 0;
     uint8_t inb = 0;
@@ -101,6 +105,18 @@ int64_t proto_read_varlong(unsigned char **buf, struct read_context *ctx) {
     }
 
     PROTOCOL_ERROR(ctx, "VarLong too big");
+}
+
+float proto_read_float(unsigned char **buf, struct read_context *ctx) {
+    union { uint32_t raw; float out; } con;
+    con.raw = proto_read_uint(buf, ctx);
+    return con.out;
+}
+
+double proto_read_double(unsigned char **buf, struct read_context *ctx) {
+    union { uint64_t raw; double out; } con;
+    con.raw = proto_read_ulong(buf, ctx);
+    return con.out;
 }
 
 void proto_read_bytes(unsigned char **buf, unsigned char *dest, size_t amount, struct read_context *ctx) {
@@ -129,6 +145,13 @@ void proto_read_lenstr(unsigned char **buf, char **outstr, int32_t *len, struct 
     *len = strbytes;
 }
 
+void proto_read_blockpos(unsigned char **buf, struct block_position *pos, struct read_context *ctx) {
+    int64_t pack = (int64_t)proto_read_ulong(buf, ctx);
+    pos->x = pack >> 38;
+    pos->y = (pack >> 26) & 0xFFF;
+    pos->z = (pack << 38) >> 38;
+}
+
 void proto_handle_incoming(void *client, unsigned char *buf, struct read_context *ctx) {
     client_t *sender = client;
 
@@ -140,12 +163,16 @@ void proto_handle_incoming(void *client, unsigned char *buf, struct read_context
     }
 }
 
-const char *const protocol_names[] = {
+const char *const protocol_names[PROTOCOL_COUNT] = {
     "Handshake",
     "Status",
     "Login",
     "Play"
 };
+
+int proto_write_bool(struct auto_buffer *buf, bool val) {
+    return proto_write_ubyte(buf, val ? 1 : 0);
+}
 
 int proto_write_byte(struct auto_buffer *buf, int8_t val) {
     return ab_push(buf, &val, sizeof(val));
@@ -202,6 +229,18 @@ int proto_write_varlong(struct auto_buffer *buf, int64_t val) {
     return 0;
 }
 
+int proto_write_float(struct auto_buffer *buf, float val) {
+    union { uint32_t raw; float v; } con;
+    con.v = val;
+    return proto_write_uint(buf, con.raw);
+}
+
+int proto_write_double(struct auto_buffer *buf, double val) {
+    union { uint64_t raw; double v; } con;
+    con.v = val;
+    return proto_write_ulong(buf, con.raw);
+}
+
 int proto_write_bytes(struct auto_buffer *buf, const void *src, size_t len) {
     return ab_push(buf, src, len);
 }
@@ -214,4 +253,9 @@ int proto_write_lenstr(struct auto_buffer *buf, const char *str, int32_t len) {
     res = proto_write_varint(buf, len);
     if (res == 0) res = proto_write_bytes(buf, str, (size_t)len);
     return res;
+}
+
+int proto_write_blockpos(struct auto_buffer *buf, const struct block_position *pos) {
+    uint64_t pack = ((uint64_t)(pos->x & 0x3FFFFFF) << 38) | ((uint64_t)(pos->y & 0xFFF) << 26) | (pos->z & 0x3FFFFFF);
+    return proto_write_ulong(buf, pack);
 }
