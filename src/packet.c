@@ -4,8 +4,12 @@
 #include "utils.h"
 #include "log.h"
 #include "uuid.h"
+#include "sched.h"
 
 #include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <time.h>
 
 #define PROTOCOL_ERROR(_ctx, reasonfmt, ...)                   \
 do {                                                           \
@@ -156,9 +160,29 @@ void proto_login_start(void *client, int32_t pktid, unsigned char *buf, struct r
         .flags = 0x0
     };
 
+    struct packet_play_keep_alive kapkt = {
+        .id = PKTID_WRITE_PLAY_KEEP_ALIVE,
+        .payload = (int32_t)clock()
+    };
+
     client_write_pkt(sender, &jgpkt);
     client_write_pkt(sender, &sppkt);
     client_write_pkt(sender, &pplpkt);
+    client_write_pkt(sender, &kapkt);
+}
+
+void proto_play_keep_alive(void *client, int32_t pktid, unsigned char *buf, struct read_context *ctx) {
+    UNUSED(pktid);
+    client_t *sender = client;
+    int32_t payload = proto_read_varint(&buf, ctx);
+
+    if (sender->pingrespond) PROTOCOL_ERROR(ctx, "Already replied to a keep alive");
+    if (payload != sender->pingid) PROTOCOL_ERROR(ctx, "Invalid keep alive ID (expected %d, got %d)", sender->pingid, payload);
+
+    if (sched_timer_wgettime(CLOCK_MONOTONIC, &sender->lastping) < 0) {
+        log_error("proto_play_keep_alive: sched_timer_wgettime failed: %s", strerror(errno));
+    }
+    sender->pingrespond = true;
 }
 
 packet_proc *const client_proto_handshake[] = {
@@ -174,7 +198,7 @@ packet_proc *const client_proto_login[] = {
 };
 
 packet_proc *const client_proto_play[] = {
-    &proto_ignore
+    &proto_ignore, &proto_play_keep_alive
 };
 
 packet_proc *const *client_protos[PROTOCOL_COUNT] = {
@@ -184,7 +208,7 @@ packet_proc *const *client_protos[PROTOCOL_COUNT] = {
     client_proto_play
 };
 
-const int32_t client_proto_maxids[PROTOCOL_COUNT] = { 0, 1, 0, -1 };
+const int32_t client_proto_maxids[PROTOCOL_COUNT] = { 0, 1, 0, 0 };
 
 void proto_write_status_response(void *client, struct auto_buffer *buf, struct packet_base *pkt) {
     UNUSED(client);
@@ -206,6 +230,18 @@ void proto_write_login_success(void *client, struct auto_buffer *buf, struct pac
     uuid_format(&rpkt->profile->id, uuidstr, UUID_STRLEN + 1);
     proto_write_lenstr(buf, uuidstr, -1);
     proto_write_lenstr(buf, rpkt->profile->name, -1);
+}
+
+void proto_write_play_keep_alive(void *client, struct auto_buffer *buf, struct packet_base *pkt) {
+    struct packet_play_keep_alive *rpkt = (struct packet_play_keep_alive *)pkt;
+    client_t *target = client;
+
+    if (sched_timer_wgettime(CLOCK_MONOTONIC, &target->lastping) < 0) {
+        log_error("proto_write_play_keep_alive: sched_timer_wgettime failed: %s", strerror(errno));
+    }
+    target->pingrespond = false;
+    target->pingid = rpkt->payload;
+    proto_write_varint(buf, rpkt->payload);
 }
 
 void proto_write_play_join_game(void *client, struct auto_buffer *buf, struct packet_base *pkt) {
@@ -249,7 +285,7 @@ packet_write_proc *const client_write_proto_login[] = {
 };
 
 packet_write_proc *const client_write_proto_play[] = {
-    NULL, &proto_write_play_join_game, NULL, NULL, NULL, &proto_write_play_spawn_pos, NULL, NULL, &proto_write_play_player_pos_look
+    &proto_write_play_keep_alive, &proto_write_play_join_game, NULL, NULL, NULL, &proto_write_play_spawn_pos, NULL, NULL, &proto_write_play_player_pos_look
 };
 
 packet_write_proc *const *client_write_protos[] = {

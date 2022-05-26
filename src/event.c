@@ -39,6 +39,14 @@ void event_loop_handle(int timeout) {
         file_descriptor_t *fd = (file_descriptor_t *)(evt->data.ptr);
         if (fd->handler_mutex) pthread_mutex_lock(fd->handler_mutex);
 
+#if 0
+        // not sure if I should ignore the event if the client is disconnected...
+        if (fd->fd == -1) { // the socket was made invalid while we were waiting for it
+            if (fd->handler_mutex) pthread_mutex_unlock(fd->handler_mutex);
+            continue;
+        }
+#endif
+
         if (evt->events & EPOLLERR) {
             int error;
             socklen_t optlen = sizeof(int);
@@ -52,7 +60,7 @@ void event_loop_handle(int timeout) {
                 event_loop_delfd(fd);
                 close(fd->fd);
             }
-            continue; // Ignore the rest of the flags if the socket is errored
+            goto evtcomplete; // Ignore the rest of the flags if the socket is errored
         }
 
         if (evt->events & (EPOLLHUP | EPOLLRDHUP)) {
@@ -62,7 +70,7 @@ void event_loop_handle(int timeout) {
                 event_loop_delfd(fd);
                 close(fd->fd); // should probably use shutdown() here, but this branch shouldn't be taken anyway
             }
-            continue; // Ignore the rest of the flags if the peer hung up
+            goto evtcomplete; // Ignore the rest of the flags if the peer hung up
         }
 
         if (evt->events & EPOLLIN) {
@@ -75,6 +83,7 @@ void event_loop_handle(int timeout) {
             if (fd->write_handler) (*fd->write_handler)(fd, fd->handler_data);
         }
 
+evtcomplete:
         if (fd->state & FD_CALL_COMPLETE && fd->handle_complete) (*fd->handle_complete)(fd, fd->handler_data);
         else {
             event_loop_want(fd, fd->state); // rearm fd

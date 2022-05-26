@@ -38,10 +38,10 @@ void *dll_removenode(dllist_t *list, struct list_dlnode *node);
 void dll_free(dllist_t *list);
 
 #define DLLIST_FOREACH(_list, _curnode) \
-do { dll_lock(_list); for (struct list_dlnode *_curnode = (_list)->head; _curnode; _curnode = _curnode->next)
+do { dll_lock(_list); for (struct list_dlnode *_curnode = (_list)->head, *_next = (_list)->head ? (_list)->head->next : NULL; _curnode; _curnode = _next, _next = _curnode ? _curnode->next : NULL)
 
 #define DLLIST_FOREACH_REV(_list, _curnode) \
-do { dll_lock(_list); for (struct list_dlnode *_curnode = (_list)->tail; _curnode; _curnode = _curnode->prev)
+do { dll_lock(_list); for (struct list_dlnode *_curnode = (_list)->tail, *_prev = (_list)->tail ? (_list)->tail->prev : NULL; _curnode; _curnode = _prev, _prev = _curnode ? _curnode->prev : NULL)
 
 #define DLLIST_FOREACH_DONE(_list) \
 dll_unlock(_list); } while (0)

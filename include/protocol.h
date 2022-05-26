@@ -101,6 +101,7 @@ PROTO_WRITE_DEF(blockpos, const struct block_position *);
 
 #define PKTID_WRITE_LOGIN_SUCCESS   (0x02)
 
+#define PKTID_WRITE_PLAY_KEEP_ALIVE (0x00)
 #define PKTID_WRITE_PLAY_JOIN_GAME  (0x01)
 #define PKTID_WRITE_PLAY_SPAWN_POS  (0x05)
 #define PKTID_WRITE_PLAY_PLAYER_POS_LOOK (0x08)
@@ -136,6 +137,11 @@ struct packet_login_success {
 };
 
 // Clientbound Play packets
+
+struct packet_play_keep_alive {
+    PACKET_COMMON_FIELDS
+    int32_t payload;
+};
 
 struct packet_play_join_game {
     PACKET_COMMON_FIELDS

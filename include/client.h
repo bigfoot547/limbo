@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <time.h>
 
 struct tag_client;
 typedef struct tag_client client_t;
@@ -36,6 +37,10 @@ struct tag_client {
     unsigned protocol;
 
     player_t *player;
+
+    struct timespec lastping;
+    bool pingrespond;
+    int32_t pingid;
 
     bool dc_on_write;
     bool should_delete;

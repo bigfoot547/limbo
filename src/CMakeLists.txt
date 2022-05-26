@@ -10,7 +10,8 @@ set(${PROJECT_NAME}_SOURCES
     packet.c
     endianutils.c
     chat.c
-    uuid.c)
+    uuid.c
+    sched.c)
 
 list(TRANSFORM ${PROJECT_NAME}_SOURCES PREPEND src/)
 

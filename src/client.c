@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "protocol.h"
 #include "macros.h"
+#include "sched.h"
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -12,6 +13,9 @@
 #include <stdio.h>
 #include <arpa/inet.h>
 #include <sys/uio.h>
+#include <time.h>
+
+void client_disconnect_internal(client_t *client, const char *fmt, ...);
 
 void client_read_handler(file_descriptor_t *fd, void *handler_data);
 void client_write_handler(file_descriptor_t *fd, void *handler_data);
@@ -82,6 +86,11 @@ client_t *client_init(int sockfd, struct sockaddr *saddr, socklen_t saddrlen) {
     client->protocol_ver = PROTOVER_UNSET;
     client->protocol = PROTOCOL_HANDSHAKE;
 
+    if (sched_timer_wgettime(CLOCK_MONOTONIC, &client->lastping) < 0) {
+        log_error("client_init(%s): sched_timer_wgettime failed when setting lastping: %s", strerror(errno));
+    }
+    client->pingrespond = true;
+
     // initialize more stuff here
     return client;
 }
@@ -90,7 +99,7 @@ void client_free(client_t *cli) {
     if (!cli) return;
 
     if (cli->fd) {
-        if (cli->fd->fd != -1) client_disconnect(cli, "Client destroyed");
+        if (cli->fd->fd != -1) client_disconnect_internal(cli, "Client destroyed");
         free(cli->fd);
     }
     pthread_mutex_destroy(&cli->evtmutex);
@@ -101,18 +110,15 @@ void client_free(client_t *cli) {
     free(cli);
 }
 
-void client_disconnect(client_t *cli, const char *fmt, ...) {
+void client_disconnect_v(client_t *cli, const char *fmt, va_list va) {
     if (fmt) {
-        va_list va;
         char *dcmsg = NULL;
 
-        va_start(va, fmt);
         int res = vsprintf_alloc(&dcmsg, fmt, va);
-        va_end(va);
 
         unsigned level = (cli->protocol > PROTOCOL_STATUS) ? LOG_INFO : LOG_DEBUG;
         if (res < 0) {
-            log_log(level, "Disconnecting client (%s) (%s): (client_disconnect: vsprintf_alloc returned %d)", cli->saddrstr, protocol_names[cli->protocol], res);
+            log_log(level, "Disconnecting client (%s) (%s): (client_disconnect_v: vsprintf_alloc returned %d)", cli->saddrstr, protocol_names[cli->protocol], res);
         } else {
             log_log(level, "Disconnecting client (%s) (%s): %s", cli->saddrstr, protocol_names[cli->protocol], dcmsg);
             free(dcmsg);
@@ -121,16 +127,38 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
 
     pthread_mutex_lock(&cli->evtmutex);
     if (cli->fd && cli->fd->fd != -1) {
-        cli->fd->state |= FD_CALL_COMPLETE;
         event_loop_delfd(cli->fd);
         close(cli->fd->fd);
         cli->fd->fd = -1;
     }
+    pthread_mutex_unlock(&cli->evtmutex);
+}
 
-    if (cli->mypos) {
+void client_disconnect(client_t *cli, const char *fmt, ...) {
+    va_list va;
+    va_start(va, fmt);
+    client_disconnect_v(cli, fmt, va);
+    va_end(va);
+}
+
+void client_disconnect_internal(client_t *cli, const char *fmt, ...) {
+    va_list va;
+
+    pthread_mutex_lock(&cli->evtmutex);
+
+    va_start(va, fmt);
+    client_disconnect_v(cli, fmt, va);
+    va_end(va);
+
+    if (cli->fd) { // mark the client to be freed
+        cli->fd->state |= FD_CALL_COMPLETE;
+    }
+
+    if (cli->mypos) { // remove the client from the clients list
         dll_removenode(cli->clients, cli->mypos);
         cli->mypos = NULL;
     }
+
     pthread_mutex_unlock(&cli->evtmutex);
 }
 
@@ -162,9 +190,9 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
 
     if (setjmp(exlbl)) {
         if (readctx.reason)
-            client_disconnect(client, "Protocol error: %s", readctx.reason);
+            client_disconnect_internal(client, "Protocol error: %s", readctx.reason);
         else
-            client_disconnect(client, NULL);
+            client_disconnect_internal(client, NULL);
         free(readctx.reason);
         return;
     }
@@ -197,10 +225,10 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
 
             // TODO: Protocol compression
             if (pktlen <= 0) {
-                client_disconnect(client, "Protocol error: Suspicious packet length: %d <= 0", pktlen);
+                client_disconnect_internal(client, "Protocol error: Suspicious packet length: %d <= 0", pktlen);
                 return;
             } else if (pktlen > CLIENT_PKTLEN_MAX) {
-                client_disconnect(client, "Protocol error: Packet is too long: %d > %d", pktlen, CLIENT_PKTLEN_MAX);
+                client_disconnect_internal(client, "Protocol error: Packet is too long: %d > %d", pktlen, CLIENT_PKTLEN_MAX);
                 return;
             }
 
@@ -210,7 +238,7 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
                     client->recvpartsz = (size_t)pktlen;
                     void *newalloc = realloc(client->recvpartial, client->recvpartsz);
                     if (!newalloc) {
-                        client_disconnect(client, "Protocol error: Failed to increase recvpartial length (realloc returned NULL)");
+                        client_disconnect_internal(client, "Protocol error: Failed to increase recvpartial length (realloc returned NULL)");
                         return;
                     }
                     client->recvpartial = newalloc;
@@ -225,7 +253,7 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
                 readctx.remain = pktlen;
                 proto_handle_incoming(client, bufcur, readctx_ptr);
                 if (readctx.remain > 0) {
-                    client_disconnect(client, "Protocol error: Not all packet bytes consumed: %d > 0 (len %d)", readctx.remain, pktlen);
+                    client_disconnect_internal(client, "Protocol error: Not all packet bytes consumed: %d > 0 (len %d)", readctx.remain, pktlen);
                     return;
                 }
                 bufcur += pktlen;
@@ -234,12 +262,12 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
     }
 
     if (readcnt == 0) {
-        client_disconnect(client, "Disconnected");
+        client_disconnect_internal(client, "Disconnected");
         return;
     } else if (readcnt == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) fd->state &= ~FD_CAN_READ;
         else {
-            client_disconnect(client, "Read error: %s", strerror(errno));
+            client_disconnect_internal(client, "Read error: %s", strerror(errno));
             return;
         }
     }
@@ -254,13 +282,13 @@ void client_add_sendq(client_t *client, const unsigned char *buf, size_t length)
         client->sendqsz = client->sendqcur + length;
 
         if (client->sendqsz > CLIENT_MAX_SENDQ) {
-            client_disconnect(client, "Max send queue exceeded (%lu > %lu)", client->sendqsz, CLIENT_MAX_SENDQ);
+            client_disconnect_internal(client, "Max send queue exceeded (%lu > %lu)", client->sendqsz, CLIENT_MAX_SENDQ);
             return;
         }
 
         void *newsendq = realloc(client->sendq, client->sendqsz);
         if (!newsendq) {
-            client_disconnect(client, "Protocol error: Failed to increase sendq length (realloc returned NULL)");
+            client_disconnect_internal(client, "Protocol error: Failed to increase sendq length (realloc returned NULL)");
             return;
         }
         client->sendq = newsendq;
@@ -287,7 +315,7 @@ void client_write(client_t *client, const unsigned char *buf, size_t length) {
                 event_loop_want(client->fd, client->fd->state);
                 if (length > 0) client_add_sendq(client, buf, length);
             } else {
-                client_disconnect(client, "Write error: %s", strerror(errno));
+                client_disconnect_internal(client, "Write error: %s", strerror(errno));
                 goto writedone;
             }
         }
@@ -296,7 +324,7 @@ void client_write(client_t *client, const unsigned char *buf, size_t length) {
     }
 
     if (client->dc_on_write && client->sendqcur == 0) {
-        client_disconnect(client, NULL);
+        client_disconnect_internal(client, NULL);
         log_debug("Disconnecting client %s, dc_on_write was set.", client->saddrstr);
     }
 
@@ -333,7 +361,7 @@ void client_write_handler(file_descriptor_t *fd, void *handler_data) {
     client_t *client = handler_data;
 
     // flush sendq (or as much of it as we can)
-    ssize_t writecnt;
+    ssize_t writecnt = 0;
     unsigned char *writecur = client->sendq;
     while (client->sendqcur > 0 && (writecnt = write(fd->fd, writecur, client->sendqcur)) > 0) {
         writecur += writecnt;
@@ -346,13 +374,13 @@ void client_write_handler(file_descriptor_t *fd, void *handler_data) {
             if (client->sendqcur == 0) {
                 if (client->dc_on_write) {
                     log_debug("Disconnecting client %s, dc_on_write was set.", client->saddrstr);
-                    client_disconnect(client, NULL);
+                    client_disconnect_internal(client, NULL);
                 }
                 return;
             }
             memmove(client->sendq, writecur, client->sendqsz - (writecur - client->sendq));
         } else {
-            client_disconnect(client, "Write error: %s", strerror(errno));
+            client_disconnect_internal(client, "Write error: %s", strerror(errno));
             return;
         }
     }
@@ -362,8 +390,8 @@ void client_error_handler(file_descriptor_t *fd, int error, void *handler_data) 
     client_t *client = handler_data;
     UNUSED(fd);
 
-    if (error == 0) client_disconnect(client, "Disconnected");
-    else client_disconnect(client, "Error on socket: %s", strerror(error));
+    if (error == 0) client_disconnect_internal(client, "Disconnected");
+    else client_disconnect_internal(client, "Error on socket: %s", strerror(error));
 }
 
 void client_handle_complete(file_descriptor_t *fd, void *handler_data) {

@@ -1,16 +1,22 @@
 #include <locale.h>
+#include <time.h>
+#include <stdlib.h>
+#include <pthread.h>
+
 #include "log.h"
 #include "build_config.h"
 #include "event.h"
 #include "server.h"
 #include "list.h"
 #include "client.h"
+#include "macros.h"
+#include "sched.h"
+#include "protocol.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <sys/fcntl.h>
 
 volatile bool shutdown_server = false;
@@ -54,13 +60,82 @@ void *io_worker(void *arg) {
     return NULL;
 }
 
-void *tick_worker(void *arg) {
-    UNUSED(arg);
+// Seconds for non-play protocol timeout
+#define CONFIG_NPLAY_TIMEOUT (15)
 
-    while (!shutdown_server) {
-        
+// Seconds for play timeout
+#define CONFIG_PLAY_TIMEOUT  (30)
+
+// Player keep-alive frequency (should be < 20)
+#define CONFIG_PING_FREQ     (5)
+
+void *tick_worker(void *cl) {
+    dllist_t *clients = cl;
+
+    timer_state_t ts;
+    if (sched_timer_init(&ts, 0, 500000000l) < 0) {
+        log_error("tick_worker: sched_timer_init failed: %s", strerror(errno));
+        log_error("tick_worker: timer could not be initialized, aborting.");
+        abort();
     }
 
+    client_t *curcli;
+    struct timespec now, diff;
+    while (!shutdown_server) {
+        if (sched_timer_wgettime(CLOCK_MONOTONIC, &now) < 0) {
+            log_error("tick_worker: sched_timer_wgettime(&now) failed (funny stuff is about to occur): %s", strerror(errno));
+#ifdef BUILD_DEBUG
+            abort();
+#endif
+        }
+
+// helper macro to disconnect a client without breaking stuff
+#define CLIENT_DISCONNECT(_cli, _fmt, ...)         \
+client_disconnect((_cli), (_fmt), ## __VA_ARGS__); \
+dll_removenode(clients, (_cli)->mypos);            \
+(_cli)->mypos = NULL;                              \
+                                                   \
+pthread_mutex_unlock(&(_cli)->evtmutex);           \
+pthread_mutex_lock(&(_cli)->evtmutex);             \
+pthread_mutex_unlock(&(_cli)->evtmutex);           \
+                                                   \
+client_free((_cli));
+
+        DLLIST_FOREACH(clients, cur) {
+            curcli = cur->ptr;
+            pthread_mutex_lock(&curcli->evtmutex);
+
+            sched_timespec_sub(&now, &curcli->lastping, &diff);
+            if (curcli->protocol < PROTOCOL_PLAY && diff.tv_sec >= CONFIG_NPLAY_TIMEOUT) {
+                CLIENT_DISCONNECT(curcli, "Ping timeout: %ld seconds", diff.tv_sec);
+                continue;
+            } else if (curcli->protocol == PROTOCOL_PLAY) {
+                if (curcli->pingrespond && diff.tv_sec >= CONFIG_PING_FREQ) {
+                    struct packet_play_keep_alive pkt = {
+                        .id = PKTID_WRITE_PLAY_KEEP_ALIVE,
+                        .payload = (int32_t)clock()
+                    };
+                    client_write_pkt(curcli, &pkt);
+                } else if (!curcli->pingrespond && diff.tv_sec >= CONFIG_PLAY_TIMEOUT) {
+                    CLIENT_DISCONNECT(curcli, "Ping timeout: %ld seconds", diff.tv_sec);
+                    continue;
+                }
+            }
+
+            pthread_mutex_unlock(&curcli->evtmutex);
+        } DLLIST_FOREACH_DONE(clients);
+
+#undef CLIENT_DISCONNECT
+
+        if (sched_timer_wait(&ts) < 0) {
+            log_error("tick_worker: sched_timer_wait failed: %s", strerror(errno));
+#ifdef BUILD_DEBUG
+            abort();
+#endif
+        }
+    }
+
+    log_debug("tick_worker complete");
     return NULL;
 }
 
@@ -96,12 +171,13 @@ int main(void) {
     event_loop_want(&fd, FD_WANT_READ);
 
 #define THREAD_CNT (10)
-    pthread_t pt[THREAD_CNT];
+    pthread_t pt[THREAD_CNT + 1];
     for (int i = 0; i < THREAD_CNT; ++i) {
         pthread_create(pt + i, NULL, &io_worker, (void *)(unsigned long long)i);
     }
+    pthread_create(pt + THREAD_CNT, NULL, &tick_worker, clients);
 
-    for (int i = 0; i < THREAD_CNT; ++i) {
+    for (int i = 0; i < THREAD_CNT+1; ++i) {
         pthread_join(pt[i], NULL);
     }
     //(void)io_worker(NULL);
@@ -111,7 +187,12 @@ int main(void) {
 
     DLLIST_FOREACH(clients, cur) {
         client_t *cli = cur->ptr;
-        cli->mypos = NULL; // FIXME: hack to prevent client from removing itself from clients list
+        client_disconnect(cli, "Shutting down");
+
+        /* The client_free call assumes the client has already been removed from the
+           list because its fd is invalid, but client_disconnect doesn't do that.
+           It's okay because dll_free empties the list.
+         */
         client_free(cli);
     } DLLIST_FOREACH_DONE(clients);
     dll_free(clients);

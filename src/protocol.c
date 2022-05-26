@@ -156,6 +156,9 @@ void proto_handle_incoming(void *client, unsigned char *buf, struct read_context
     client_t *sender = client;
 
     int32_t pktid = proto_read_varint(&buf, ctx);
+    if (pktid < 0) {
+        PROTOCOL_ERROR(ctx, "Suspicious packet ID: %d < 0", pktid);
+    }
 
     packet_proc *target_func = client_protos[sender->protocol][client_proto_maxids[sender->protocol] < pktid ? 0 : pktid+1];
     if (target_func) {
