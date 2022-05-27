@@ -48,6 +48,13 @@ target_include_directories(${SERVER_TARGET_NAME} PRIVATE ${Iconv_INCLUDE_DIR})
 add_subdirectory(lib/md5)
 target_link_libraries(${SERVER_TARGET_NAME} PRIVATE md5)
 
+set(JANSSON_BUILD_SHARED_LIBS ON CACHE INTERNAL "" FORCE)
+set(JANSSON_EXAMPLES OFF CACHE INTERNAL "" FORCE)
+set(JANSSON_BUILD_DOCS OFF CACHE INTERNAL "" FORCE)
+set(JANSSON_WITHOUT_TESTS ON CACHE INTERNAL "" FORCE)
+add_subdirectory(lib/jansson)
+target_link_libraries(${SERVER_TARGET_NAME} PRIVATE jansson)
+
 include(CheckSymbolExists)
 check_symbol_exists(epoll_create "sys/epoll.h" HAS_EPOLL_CREATE)
 
