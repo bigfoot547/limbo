@@ -11,7 +11,8 @@ set(${PROJECT_NAME}_SOURCES
     endianutils.c
     chat.c
     uuid.c
-    sched.c)
+    sched.c
+    utf.c)
 
 list(TRANSFORM ${PROJECT_NAME}_SOURCES PREPEND src/)
 

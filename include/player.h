@@ -6,6 +6,8 @@
 struct game_profile {
     struct uuid id;
     char name[17];
+
+    char *textures, *texsig;
 };
 
 struct tag_client;

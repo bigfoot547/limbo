@@ -13,11 +13,11 @@ do {                                                           \
     longjmp(*(_ctx)->errlbl, 1);                               \
 } while (0)
 
-#define REMAIN_CHECK(_ctx, _req, reasonfmt, ...)                   \
-do {                                                               \
-    if ((size_t)(_ctx)->remain < (size_t)(_req)) {                 \
-        PROTOCOL_ERROR(_ctx, reasonfmt, ## __VA_ARGS__);           \
-    }                                                              \
+#define REMAIN_CHECK(_ctx, _req, reasonfmt, ...)         \
+do {                                                     \
+    if ((size_t)(_ctx)->remain < (size_t)(_req)) {       \
+        PROTOCOL_ERROR(_ctx, reasonfmt, ## __VA_ARGS__); \
+    }                                                    \
 } while (0)
 
 int8_t proto_read_byte_unchecked(unsigned char **buf, struct read_context *ctx) {

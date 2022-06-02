@@ -44,6 +44,12 @@ int sched_timer_wgettime(clockid_t clk, struct timespec *tp) {
     return clock_gettime(clk, tp);
 }
 
+int64_t sched_rt_millis() {
+    struct timespec tp;
+    if (clock_gettime(CLOCK_REALTIME, &tp) < 0) return -errno;
+    return tp.tv_sec * 1000l + tp.tv_nsec / 1000000l;
+}
+
 int sched_timer_init(timer_state_t *ts, time_t per_sec, long per_nanos) {
     ts->period.tv_sec = per_sec;
     ts->period.tv_nsec = per_nanos;

@@ -37,6 +37,8 @@ struct tag_client {
     unsigned protocol;
 
     player_t *player;
+    struct uuid spoofed_id;
+    char *textures, *texsig;
 
     struct timespec lastping;
     bool pingrespond;
@@ -54,6 +56,8 @@ client_t *client_init(int fd, struct sockaddr *saddr, socklen_t saddrlen);
 void client_free(client_t *cli);
 
 void client_disconnect(client_t *cli, const char *fmt, ...);
+void client_disconnect_w(client_t *cli, const wchar_t *fmt, ...);
+void client_kick_w(client_t *cli, const wchar_t *fmt, ...);
 void client_write(client_t *client, const unsigned char *buf, size_t length);
 void client_write_pkt(client_t *client, void *pkt);
 

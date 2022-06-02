@@ -15,7 +15,8 @@ struct read_context {
     int32_t remain;
     int32_t protover;
     char *reason;
-    jmp_buf *errlbl;
+    wchar_t *reasonw;
+    jmp_buf *errlbl, *dclbl;
 };
 
 #define TOK_PASTE(X, Y) X ## Y
@@ -99,12 +100,14 @@ PROTO_WRITE_DEF(blockpos, const struct block_position *);
 #define PKTID_WRITE_STATUS_RESPONSE (0x00)
 #define PKTID_WRITE_STATUS_PONG     (0x01)
 
+#define PKTID_WRITE_LOGIN_DISCONNECT (0x00)
 #define PKTID_WRITE_LOGIN_SUCCESS   (0x02)
 
 #define PKTID_WRITE_PLAY_KEEP_ALIVE (0x00)
 #define PKTID_WRITE_PLAY_JOIN_GAME  (0x01)
 #define PKTID_WRITE_PLAY_SPAWN_POS  (0x05)
 #define PKTID_WRITE_PLAY_PLAYER_POS_LOOK (0x08)
+#define PKTID_WRITE_PLAY_DISCONNECT (0x40)
 
 // clientbound packet definitions
 #define PACKET_COMMON_FIELDS \
@@ -121,7 +124,7 @@ extern packet_write_proc *const *client_write_protos[PROTOCOL_COUNT];
 
 struct packet_status_response {
     PACKET_COMMON_FIELDS
-    const char *text; // TODO: make custom struct for chat components (wchar_t involved?????)
+    const wchar_t *text; // TODO: make custom struct for chat components (wchar_t involved?????)
 };
 
 struct packet_status_pong {
@@ -130,6 +133,17 @@ struct packet_status_pong {
 };
 
 // Clientbound Login packets
+
+struct packet_disconnect {
+    PACKET_COMMON_FIELDS
+    bool wide;
+    union {
+        const char *c;
+        const wchar_t *w;
+    } text;
+};
+
+#define packet_login_disconnect packet_disconnect
 
 struct packet_login_success {
     PACKET_COMMON_FIELDS
@@ -173,5 +187,7 @@ struct packet_play_player_position_look {
     float yaw, pitch;
     uint8_t flags;
 };
+
+#define packet_play_disconnect packet_disconnect
 
 #endif // include guard

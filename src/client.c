@@ -113,8 +113,38 @@ void client_free(client_t *cli) {
     free(cli->saddrstr);
     free(cli->recvpartial);
     free(cli->sendq);
+    free(cli->textures);
+    free(cli->texsig);
     free(cli->player);
     free(cli);
+}
+
+void client_actually_disconnect_for_real(client_t *cli) {
+    pthread_mutex_lock(&cli->evtmutex);
+    if (cli->fd && cli->fd->fd != -1) {
+        event_loop_delfd(cli->fd);
+        close(cli->fd->fd);
+        cli->fd->fd = -1;
+    }
+    pthread_mutex_unlock(&cli->evtmutex);
+}
+
+void client_disconnect_vw(client_t *cli, const wchar_t *fmt, va_list va) {
+    if (fmt) {
+        wchar_t *dcmsg = NULL;
+
+        int res = vswprintf_alloc(&dcmsg, fmt, va);
+
+        unsigned level = (cli->protocol > PROTOCOL_STATUS) ? LOG_INFO : LOG_DEBUG;
+        if (res < 0) {
+            log_log(level, "Disconnecting client (%s) (%s): (client_disconnect_vw: vsprintf_alloc returned %d)", cli->saddrstr, protocol_names[cli->protocol], res);
+        } else {
+            log_log(level, "Disconnecting client (%s) (%s): %ls", cli->saddrstr, protocol_names[cli->protocol], dcmsg);
+            free(dcmsg);
+        }
+    }
+
+    client_actually_disconnect_for_real(cli);
 }
 
 void client_disconnect_v(client_t *cli, const char *fmt, va_list va) {
@@ -132,13 +162,7 @@ void client_disconnect_v(client_t *cli, const char *fmt, va_list va) {
         }
     }
 
-    pthread_mutex_lock(&cli->evtmutex);
-    if (cli->fd && cli->fd->fd != -1) {
-        event_loop_delfd(cli->fd);
-        close(cli->fd->fd);
-        cli->fd->fd = -1;
-    }
-    pthread_mutex_unlock(&cli->evtmutex);
+    client_actually_disconnect_for_real(cli);
 }
 
 void client_disconnect(client_t *cli, const char *fmt, ...) {
@@ -146,6 +170,65 @@ void client_disconnect(client_t *cli, const char *fmt, ...) {
     va_start(va, fmt);
     client_disconnect_v(cli, fmt, va);
     va_end(va);
+}
+
+void client_disconnect_w(client_t *cli, const wchar_t *fmt, ...) {
+    va_list va;
+    va_start(va, fmt);
+    client_disconnect_vw(cli, fmt, va);
+    va_end(va);
+}
+
+void client_kick_w(client_t *cli, const wchar_t *fmt, ...) {
+    wchar_t *reason = NULL, *reason_com = NULL;
+    va_list va;
+
+    va_start(va, fmt);
+    int res = vswprintf_alloc(&reason, fmt, va);
+    va_end(va);
+
+    if (res >= 0 && reason) {
+        res = swprintf_alloc(&reason_com, L"{\"text\":\"%ls\"}", reason);
+    }
+
+    if (res >= 0 && reason_com) {
+        unsigned proto = cli->protocol;
+
+        switch(proto) {
+            case PROTOCOL_HANDSHAKE:
+            case PROTOCOL_LOGIN: {
+                struct packet_login_disconnect pkt = {
+                    .id = PKTID_WRITE_LOGIN_DISCONNECT,
+                    .wide = true,
+                    .text = { .w = reason }
+                };
+
+                /* The client's protocol is temporarily changed because PROTOCOL_HANDSHAKE has no
+                 * write methods set. This is "safe" to do because the client is probably already
+                 * in the PROTOCOL_LOGIN state by the time we receive their handshake Set Protocol
+                 * packet.
+                 */
+                cli->protocol = PROTOCOL_LOGIN;
+                client_write_pkt(cli, &pkt);
+                cli->protocol = proto;
+                break;
+            }
+            case PROTOCOL_PLAY: {
+                struct packet_play_disconnect pkt = {
+                    .id = PKTID_WRITE_PLAY_DISCONNECT,
+                    .wide = true,
+                    .text = { .w = reason }
+                };
+
+                client_write_pkt(cli, &pkt);
+                break;
+            }
+        }
+    }
+    free(reason_com);
+
+    client_disconnect_w(cli, L"Kicked: %ls", reason);
+    free(reason);
 }
 
 void client_disconnect_internal(client_t *cli, const char *fmt, ...) {
@@ -189,11 +272,12 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
      * squashed, and it doesn't matter if proto_* functions do this caching, as they aren't
      * called after setjmp(). */
     struct read_context *readctx_ptr = (struct read_context *)&readctx;
-    jmp_buf exlbl;
+    jmp_buf exlbl, dclbl;
 
     readctx.protover = client->protocol_ver;
     readctx.reason = NULL;
     readctx.errlbl = &exlbl;
+    readctx.dclbl = &dclbl;
 
     if (setjmp(exlbl)) {
         if (readctx.reason)
@@ -201,6 +285,14 @@ void client_read_handler(file_descriptor_t *fd, void *handler_data) {
         else
             client_disconnect_internal(client, NULL);
         free(readctx.reason);
+        return;
+    }
+
+    if (setjmp(dclbl)) {
+        if (readctx.reasonw)
+            client_kick_w(client, L"%ls", readctx.reasonw);
+        free(readctx.reasonw);
+        fd->state |= FD_CALL_COMPLETE;
         return;
     }
 
@@ -361,6 +453,12 @@ void client_write_pkt(client_t *client, void *pkt) {
     proto_write_varint(&pkt_writebuf2, (int32_t)pktlen);
     ab_push2(&pkt_writebuf2, pkt_writebuf.buf, pktlen);
     client_write(client, pkt_writebuf2.buf, ab_getwrcur(&pkt_writebuf2));
+
+    for (size_t i = 0, max = ab_getwrcur(&pkt_writebuf2); i < max; ++i) {
+        printf("%2.2hhx ", pkt_writebuf2.buf[i]);
+    }
+    putchar('\n');
+
     ab_free(&pkt_writebuf2);
     ab_free(&pkt_writebuf);
 }

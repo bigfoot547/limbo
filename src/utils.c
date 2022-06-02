@@ -31,6 +31,30 @@ int vsprintf_alloc(char **dest, const char *fmt, va_list va) {
     return 0;
 }
 
+int swprintf_alloc(wchar_t **dest, const wchar_t *fmt, ...) {
+    va_list va;
+    va_start(va, fmt);
+    int res = vswprintf_alloc(dest, fmt, va);
+    va_end(va);
+    return res;
+}
+
+#define WALLOC_BUF_SZ (4096)
+int vswprintf_alloc(wchar_t **dest, const wchar_t *fmt, va_list va) {
+    wchar_t buf[WALLOC_BUF_SZ];
+    int n = vswprintf(buf, WALLOC_BUF_SZ, fmt, va);
+    size_t sz;
+    if (n < 0) return -1;
+
+    sz = ((size_t)n + 1) * sizeof(wchar_t);
+    wchar_t *dest2 = malloc(sz);
+    if (!dest2) return -1;
+
+    memcpy(dest2, buf, sz);
+    *dest = dest2;
+    return 0;
+}
+
 int ab_init(struct auto_buffer *ab, size_t capacity, size_t limit) {
     if (capacity > 0) {
         unsigned char *newbuf = malloc(capacity);
@@ -80,6 +104,7 @@ int ab_push(struct auto_buffer *ab, const void *buf, size_t sz) {
 
 int ab_expect(struct auto_buffer *ab, size_t newsz) {
     if (newsz <= ab->capacity) return 0;
+    if (newsz > ab->limit) return -2;
     size_t wused = ab->writecur - ab->buf;
     size_t rused = ab->readcur - ab->buf;
 
@@ -109,10 +134,24 @@ void ab_read(struct auto_buffer *ab, void *out, size_t *len) {
     *len = readlen;
 }
 
+int ab_copy(struct auto_buffer *dst, struct auto_buffer *src, size_t len) {
+    size_t srcremain = ab_getremain(src);
+    if (len == 0 || len > srcremain) len = srcremain;
+
+    int res = ab_push(dst, src->readcur, len);
+    if (res < 0) return res;
+    src->readcur += len;
+    return 0;
+}
+
 size_t ab_getrdcur(struct auto_buffer *ab) {
     return ab->readcur - ab->buf;
 }
 
 size_t ab_getwrcur(struct auto_buffer *ab) {
     return ab->writecur - ab->buf;
+}
+
+size_t ab_getremain(struct auto_buffer *ab) {
+    return ab->writecur - ab->readcur;
 }

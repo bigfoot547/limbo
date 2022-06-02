@@ -54,6 +54,7 @@ set(JANSSON_BUILD_DOCS OFF CACHE INTERNAL "" FORCE)
 set(JANSSON_WITHOUT_TESTS ON CACHE INTERNAL "" FORCE)
 add_subdirectory(lib/jansson)
 target_link_libraries(${SERVER_TARGET_NAME} PRIVATE jansson)
+target_include_directories(${SERVER_TARGET_NAME} PRIVATE ${jansson_BINARY_DIR}/include)
 
 include(CheckSymbolExists)
 check_symbol_exists(epoll_create "sys/epoll.h" HAS_EPOLL_CREATE)

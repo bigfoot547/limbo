@@ -120,9 +120,11 @@ client_free((_cli));
                 continue;
             } else if (curcli->protocol == PROTOCOL_PLAY) {
                 if (curcli->pingrespond && diff.tv_sec >= CONFIG_PING_FREQ) {
+                    int64_t mil = sched_rt_millis();
+                    if (mil < 0) log_warn("tick_worker: sched_rt_millis failed: %s", strerror(-mil));
                     struct packet_play_keep_alive pkt = {
                         .id = PKTID_WRITE_PLAY_KEEP_ALIVE,
-                        .payload = (int32_t)clock()
+                        .payload = (int32_t)mil
                     };
                     client_write_pkt(curcli, &pkt);
                 } else if (!curcli->pingrespond && diff.tv_sec >= CONFIG_PLAY_TIMEOUT) {
@@ -159,7 +161,7 @@ int main(void) {
 
     event_loop_init();
     server_t *serv = NULL;
-    if (!server_init("::", 25565, 0, &serv)) {
+    if (!server_init("::", 25566, 0, &serv)) {
         log_error("Failed to bind serv.");
         return 1;
     }
